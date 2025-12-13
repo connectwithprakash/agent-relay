@@ -2,7 +2,7 @@
 Database models for Agent Relay
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -18,6 +18,8 @@ class Relay(Base):
     current_turn = Column(Integer, default=0)  # Index of agent whose turn it is
     agent_count = Column(Integer, default=2)
     agent_names = Column(JSON)  # List of agent names
+    is_public = Column(Boolean, default=False)  # Privacy control
+    owner_id = Column(String, nullable=True)  # Owner identifier for access control
 
     # Relationships
     messages = relationship("Message", back_populates="relay", cascade="all, delete-orphan")

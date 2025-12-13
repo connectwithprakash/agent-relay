@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 # Relay Schemas
 class CreateRelayRequest(BaseModel):
     agent_names: list[str] = Field(default=["agent_0", "agent_1"], min_length=2, max_length=10)
+    is_public: bool = False
+    owner_id: Optional[str] = None
 
 
 class CreateRelayResponse(BaseModel):
@@ -25,6 +27,8 @@ class RelayState(BaseModel):
     last_message: Optional[str] = None
     last_agent: Optional[str] = None
     created_at: str
+    is_public: bool = False
+    owner_id: Optional[str] = None
 
 
 # Message Schemas

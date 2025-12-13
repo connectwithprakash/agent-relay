@@ -99,6 +99,19 @@ def get_relay_or_404(db: Session, relay_id: str) -> Relay:
         raise HTTPException(status_code=404, detail=f"Relay {relay_id} not found")
     return relay
 
+def check_relay_access(relay: Relay, owner_id: str = None) -> bool:
+    """Check if access to relay is allowed"""
+    # Public relays are accessible to everyone
+    if relay.is_public:
+        return True
+    # Private relays require owner_id match
+    if relay.owner_id and owner_id == relay.owner_id:
+        return True
+    # Private relays with no owner are accessible (backwards compat)
+    if not relay.owner_id:
+        return True
+    return False
+
 # API Endpoints
 
 @app.post("/relays", response_model=CreateRelayResponse)
@@ -110,7 +123,9 @@ async def create_relay(req: CreateRelayRequest, db: Session = Depends(get_db)):
         id=relay_id,
         agent_names=req.agent_names,
         agent_count=len(req.agent_names),
-        current_turn=0
+        current_turn=0,
+        is_public=req.is_public,
+        owner_id=req.owner_id
     )
 
     db.add(relay)
@@ -124,9 +139,13 @@ async def create_relay(req: CreateRelayRequest, db: Session = Depends(get_db)):
     )
 
 @app.get("/relays/{relay_id}", response_model=RelayState)
-async def get_relay_state(relay_id: str, db: Session = Depends(get_db)):
+async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Depends(get_db)):
     """Get current relay state"""
     relay = get_relay_or_404(db, relay_id)
+
+    # Check access for private relays
+    if not check_relay_access(relay, owner_id):
+        raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
 
     # Get message count and last message
     message_count = db.query(Message).filter(Message.relay_id == relay_id).count()
@@ -139,7 +158,9 @@ async def get_relay_state(relay_id: str, db: Session = Depends(get_db)):
         message_count=message_count,
         last_message=last_message.content if last_message else None,
         last_agent=last_message.agent_name if last_message else None,
-        created_at=relay.created_at.isoformat()
+        created_at=relay.created_at.isoformat(),
+        is_public=relay.is_public,
+        owner_id=relay.owner_id
     )
 
 @app.post("/relays/{relay_id}/messages", response_model=SendMessageResponse)
@@ -212,10 +233,15 @@ async def get_message_history(
     relay_id: str,
     limit: int = 50,
     offset: int = 0,
+    owner_id: str = None,
     db: Session = Depends(get_db)
 ):
     """Get message history"""
     relay = get_relay_or_404(db, relay_id)
+
+    # Check access for private relays
+    if not check_relay_access(relay, owner_id):
+        raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
 
     # Get messages
     messages = (
