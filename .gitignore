@@ -34,3 +34,7 @@ node_modules/
 dist/
 build/
 *.log
+
+# Environment variables
+.env
+.env.local
