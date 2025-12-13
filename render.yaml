@@ -1,0 +1,13 @@
+# Render.com deployment configuration for Agent Relay
+services:
+  - type: web
+    name: agent-relay-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+    healthCheckPath: /health
+    plan: free
