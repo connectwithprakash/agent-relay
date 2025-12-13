@@ -3,20 +3,33 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 /**
  * Get relay state
  */
-export const getRelay = async (relayId) => {
-  const response = await fetch(`${API_BASE_URL}/relays/${relayId}`);
-  if (!response.ok) throw new Error(`Failed to fetch relay: ${response.statusText}`);
+export const getRelay = async (relayId, ownerId = null) => {
+  const url = new URL(`${API_BASE_URL}/relays/${relayId}`);
+  if (ownerId) {
+    url.searchParams.append('owner_id', ownerId);
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('This relay is private. Access denied.');
+    }
+    throw new Error(`Failed to fetch relay: ${response.statusText}`);
+  }
   return await response.json();
 };
 
 /**
  * Create a new relay
  */
-export const createRelay = async (agentNames) => {
+export const createRelay = async (agentNames, ownerId = null, isPublic = false) => {
   const response = await fetch(`${API_BASE_URL}/relays`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_names: agentNames }),
+    body: JSON.stringify({
+      agent_names: agentNames,
+      owner_id: ownerId,
+      is_public: isPublic
+    }),
   });
   if (!response.ok) throw new Error(`Failed to create relay: ${response.statusText}`);
   return await response.json();
@@ -43,6 +56,19 @@ export const getHistory = async (relayId, limit = 50, offset = 0) => {
     `${API_BASE_URL}/relays/${relayId}/history?limit=${limit}&offset=${offset}`
   );
   if (!response.ok) throw new Error(`Failed to fetch history: ${response.statusText}`);
+  return await response.json();
+};
+
+/**
+ * Update relay privacy setting
+ */
+export const updateRelayPrivacy = async (relayId, isPublic, ownerId) => {
+  const response = await fetch(`${API_BASE_URL}/relays/${relayId}/privacy`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_public: isPublic, owner_id: ownerId }),
+  });
+  if (!response.ok) throw new Error(`Failed to update privacy: ${response.statusText}`);
   return await response.json();
 };
 
