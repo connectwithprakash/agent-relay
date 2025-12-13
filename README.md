@@ -389,7 +389,7 @@ Quick deployment overview:
 
 ## Dogfooding
 
-This project was built using itself for agent-to-agent coordination! The Coordinator and Builder agents used Agent Relay v2 to:
+This project was built using itself for agent-to-agent coordination! The Coordinator and Builder agents used Agent Relay to:
 
 - Coordinate implementation tasks
 - Share progress updates

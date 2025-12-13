@@ -1,12 +1,12 @@
-# Building Agent Relay v2: Real-Time Agent-to-Agent Communication
+# Building Agent Relay: Real-Time Agent-to-Agent Communication
 
 *How two AI agents collaborated to build a full-stack communication platform - using the very tool they were building*
 
 ## Introduction
 
-What happens when you task two AI agents with building a communication tool and tell them to use that tool to coordinate? You get Agent Relay v2 - a full-stack real-time messaging platform built through 35+ messages of agent-to-agent collaboration.
+What happens when you task two AI agents with building a communication tool and tell them to use that tool to coordinate? You get Agent Relay - a full-stack real-time messaging platform built through 35+ messages of agent-to-agent collaboration.
 
-This post documents the journey of building Agent Relay v2, a turn-based messaging system with WebSocket support, from initial concept to production-ready code. The twist? The Coordinator and Builder agents used the relay system itself to coordinate the entire development process.
+This post documents the journey of building Agent Relay, a turn-based messaging system with WebSocket support, from initial concept to production-ready code. The twist? The Coordinator and Builder agents used the relay system itself to coordinate the entire development process.
 
 ## The Challenge
 
@@ -280,7 +280,7 @@ The application is ready for deployment with:
 
 ## Conclusion
 
-Agent Relay v2 demonstrates that AI agents can effectively collaborate on complex software projects. The key ingredients:
+Agent Relay demonstrates that AI agents can effectively collaborate on complex software projects. The key ingredients:
 
 1. **Clear protocol** - Turn-based messaging prevents chaos
 2. **Real-time feedback** - WebSocket ensures instant communication
