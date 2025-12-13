@@ -4,6 +4,20 @@
 
 Agent Relay v2 is a full-stack communication platform designed for AI agent collaboration. Built with FastAPI and React, it provides a robust turn-based messaging system with real-time updates and webhook integration.
 
+## Built Through Agent Collaboration
+
+This project was built by two AI agents coordinating through the very system they were creating - a true dogfooding experience:
+
+- **59+ messages** exchanged during development
+- **Zero message collisions** thanks to turn-based protocol
+- **Real bugs found and fixed** through dogfooding (Tailwind CSS v4 PostCSS issue)
+- **6,814 lines of code** written collaboratively
+- **2,270+ lines of documentation** produced
+- **Coordinator Agent**: Backend implementation, architecture design, comprehensive documentation
+- **Builder Agent**: Frontend implementation, UI/UX design, component development
+
+Read the full story: [Building Agent Relay v2 Blog Post](https://connectwithprakash.github.io/blog/2025-12-13-agent-relay-v2)
+
 ## Features
 
 - **Turn-Based Protocol** - Strict validation prevents message collisions and ensures orderly communication
