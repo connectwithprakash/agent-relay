@@ -240,7 +240,10 @@ class TestWebhooks:
             json={"url": "https://example.com/webhook", "agent": "bob"},
             headers={"X-API-Key": api_key},
         )
-        response = client.get(f"/relays/{relay_id}/webhooks")
+        response = client.get(
+            f"/relays/{relay_id}/webhooks",
+            headers={"X-API-Key": api_key},
+        )
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1

@@ -16,6 +16,9 @@ from .exceptions import (
 from .models import MessageHistory, MessageInfo, RelayInfo, RelayState, SendResult
 
 
+_DEFAULT_RETRY_AFTER = 5.0
+
+
 def _raise_for_status(response: httpx.Response) -> None:
     """Convert HTTP error responses into typed SDK exceptions."""
     if response.is_success:
@@ -52,9 +55,15 @@ class AgentRelayClient:
             result = client.send_message(relay.relay_id, "hello", "alice")
     """
 
-    def __init__(self, base_url: str = "http://localhost:8000", api_key: str | None = None):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: str | None = None,
+        max_retries: int = 3,
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.max_retries = max_retries
         self._client = httpx.Client(base_url=self.base_url, headers=self._headers())
 
     def _headers(self) -> dict[str, str]:
@@ -63,12 +72,27 @@ class AgentRelayClient:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """Send an HTTP request with automatic retry on 429 Rate Limit responses."""
+        for attempt in range(1, self.max_retries + 1):
+            resp = self._client.request(method, url, **kwargs)
+            if resp.status_code != 429 or attempt == self.max_retries:
+                return resp
+            retry_after = _DEFAULT_RETRY_AFTER
+            if "retry-after" in resp.headers:
+                try:
+                    retry_after = float(resp.headers["retry-after"])
+                except (ValueError, TypeError):
+                    pass
+            time.sleep(retry_after)
+        return resp  # unreachable, but satisfies type checkers
+
     # -- Relay operations --
 
     def create_relay(self, agent_names: list[str], is_public: bool = False) -> RelayInfo:
         """Create a new relay for agent communication."""
-        resp = self._client.post(
-            "/relays",
+        resp = self._request(
+            "POST", "/relays",
             json={"agent_names": agent_names, "is_public": is_public},
         )
         _raise_for_status(resp)
@@ -76,7 +100,7 @@ class AgentRelayClient:
 
     def get_relay(self, relay_id: str) -> RelayState:
         """Get the current state of a relay."""
-        resp = self._client.get(f"/relays/{relay_id}")
+        resp = self._request("GET", f"/relays/{relay_id}")
         _raise_for_status(resp)
         return RelayState(**resp.json())
 
@@ -101,8 +125,8 @@ class AgentRelayClient:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        resp = self._client.post(
-            f"/relays/{relay_id}/messages",
+        resp = self._request(
+            "POST", f"/relays/{relay_id}/messages",
             json={"content": content, "type": "text", "agent": agent},
             headers=headers,
         )
@@ -113,8 +137,8 @@ class AgentRelayClient:
         self, relay_id: str, limit: int = 50, offset: int = 0
     ) -> list[MessageInfo]:
         """Get message history for a relay."""
-        resp = self._client.get(
-            f"/relays/{relay_id}/history",
+        resp = self._request(
+            "GET", f"/relays/{relay_id}/history",
             params={"limit": limit, "offset": offset},
         )
         _raise_for_status(resp)
@@ -159,7 +183,7 @@ class AgentRelayClient:
 
     def health(self) -> dict:
         """Check API health."""
-        resp = self._client.get("/health")
+        resp = self._request("GET", "/health")
         _raise_for_status(resp)
         return resp.json()
 

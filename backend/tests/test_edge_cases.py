@@ -7,15 +7,13 @@ import pytest
 class TestRelayEdgeCases:
 
     def test_create_relay_duplicate_agent_names(self, client):
-        """Creating a relay with duplicate agent names should be allowed
-        (no uniqueness constraint on agent names within a relay)."""
+        """Creating a relay with duplicate agent names should be rejected."""
         response = client.post("/relays", json={
             "agent_names": ["alice", "alice"],
             "is_public": True,
         })
-        assert response.status_code == 200
-        data = response.json()
-        assert data["agent_names"] == ["alice", "alice"]
+        assert response.status_code == 422
+        assert "unique" in response.text.lower()
 
     def test_create_relay_max_agents(self, client):
         """Creating a relay with exactly 10 agents (the max) should succeed."""

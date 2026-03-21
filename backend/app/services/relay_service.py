@@ -8,17 +8,18 @@ from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
 from ..models import Relay, Message
+from ..repositories import RelayRepository, MessageRepository
 from ..schemas import CreateRelayRequest, RelayState, MessageSchema
 
 
 class RelayService:
     """Service for relay business operations"""
-    
+
     @staticmethod
     def generate_relay_id() -> str:
         """Generate unique relay ID"""
         return f"relay-{secrets.token_urlsafe(8)}"
-    
+
     @staticmethod
     def create_relay(db: Session, request: CreateRelayRequest) -> Tuple[Relay, str]:
         """Create a new relay with an API key.
@@ -42,9 +43,8 @@ class RelayService:
             turn_started_at=datetime.now(timezone.utc),
         )
 
-        db.add(relay)
-        db.commit()
-        db.refresh(relay)
+        repo = RelayRepository(db)
+        relay = repo.create(relay)
 
         return relay, api_key
 
@@ -59,13 +59,9 @@ class RelayService:
     @staticmethod
     def get_relay_state(db: Session, relay: Relay) -> RelayState:
         """Get current relay state with message info"""
-        message_count = db.query(Message).filter(Message.relay_id == relay.id).count()
-        last_message = (
-            db.query(Message)
-            .filter(Message.relay_id == relay.id)
-            .order_by(Message.created_at.desc())
-            .first()
-        )
+        message_repo = MessageRepository(db)
+        message_count = message_repo.count_by_relay_id(relay.id)
+        last_message = message_repo.get_last_message(relay.id)
         
         return RelayState(
             relay_id=relay.id,

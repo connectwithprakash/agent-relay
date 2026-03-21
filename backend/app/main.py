@@ -441,9 +441,12 @@ async def register_webhook(
     )
 
 @app.get("/relays/{relay_id}/webhooks", response_model=List[WebhookSchema])
-async def list_webhooks(relay_id: str, db: Session = Depends(get_db)):
-    """List all webhooks for a relay"""
-    get_relay_or_404(db, relay_id)
+async def list_webhooks(
+    relay: Relay = Depends(require_relay_auth),
+    db: Session = Depends(get_db),
+):
+    """List all webhooks for a relay. Requires API key for authenticated relays."""
+    relay_id = relay.id
 
     webhook_repo = WebhookRepository(db)
     webhooks = webhook_repo.get_by_relay_id(relay_id)

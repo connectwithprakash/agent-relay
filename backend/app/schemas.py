@@ -17,6 +17,13 @@ class CreateRelayRequest(BaseModel):
     owner_id: Optional[str] = None
     turn_timeout: Optional[int] = Field(default=None, ge=1, description="Seconds per turn before auto-advance. None = no timeout.")
 
+    @field_validator('agent_names')
+    @classmethod
+    def no_duplicates(cls, v):
+        if len(v) != len(set(v)):
+            raise ValueError('Agent names must be unique')
+        return v
+
 
 class CreateRelayResponse(BaseModel):
     relay_id: str
