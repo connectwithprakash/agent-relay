@@ -1,13 +1,19 @@
-import RelayDashboard from './components/RelayDashboard';
-import './App.css';
+import { Routes, Route } from 'react-router-dom';
+import Layout from './components/Layout';
+import HomePage from './pages/HomePage';
+import CreateRelayPage from './pages/CreateRelayPage';
+import RelayPage from './pages/RelayPage';
 
 function App() {
-  // For now, hardcode the relay ID and agent name
-  // TODO: Add relay selection UI later
-  const relayId = 'relay-Ou9jQcYbJxQ';
-  const agentName = 'builder';
-
-  return <RelayDashboard relayId={relayId} agentName={agentName} />;
+  return (
+    <Layout>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/create" element={<CreateRelayPage />} />
+        <Route path="/relay/:relayId" element={<RelayPage />} />
+      </Routes>
+    </Layout>
+  );
 }
 
 export default App;
