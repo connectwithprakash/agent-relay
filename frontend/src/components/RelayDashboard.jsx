@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useRelay, useWebSocket, useMessages } from '../hooks';
+import { getApiKey } from '../utils/auth';
 import TurnIndicator from './TurnIndicator';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
@@ -20,7 +21,10 @@ export default function RelayDashboard({ relayId, agentName }) {
   const wsUrl = useMemo(() => {
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const wsProtocol = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://');
-    return `${wsProtocol}/relays/${relayId}/ws?agent=${agentName}`;
+    const apiKey = getApiKey(relayId);
+    let url = `${wsProtocol}/relays/${relayId}/ws?agent=${agentName}`;
+    if (apiKey) url += `&api_key=${encodeURIComponent(apiKey)}`;
+    return url;
   }, [relayId, agentName]);
 
   const { connectionStatus } = useWebSocket(wsUrl, {

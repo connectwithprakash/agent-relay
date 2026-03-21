@@ -56,6 +56,11 @@ export function useRelayCreation() {
       const trimmed = agentNames.map((n) => n.trim());
       const result = await createRelay(trimmed, null, isPublic);
       setCreatedRelay(result);
+      // Store API key for this relay so dashboard can authenticate
+      if (result.api_key && result.relay_id) {
+        const { storeApiKey } = await import('../utils/auth.js');
+        storeApiKey(result.relay_id, result.api_key);
+      }
       return result;
     } catch (err) {
       setError(err.message);

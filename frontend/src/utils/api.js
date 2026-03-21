@@ -38,10 +38,19 @@ export const createRelay = async (agentNames, ownerId = null, isPublic = false) 
 /**
  * Send a message to a relay
  */
-export const sendMessage = async (relayId, content, agent) => {
+export const sendMessage = async (relayId, content, agent, apiKey = null) => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  } else {
+    // Try to get from localStorage
+    const { getApiKey } = await import('./auth.js');
+    const storedKey = getApiKey(relayId);
+    if (storedKey) headers['Authorization'] = `Bearer ${storedKey}`;
+  }
   const response = await fetch(`${API_BASE_URL}/relays/${relayId}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ content, type: 'text', agent }),
   });
   if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
