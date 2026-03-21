@@ -2,13 +2,30 @@
 Webhook service - Webhook delivery and management
 """
 import asyncio
-from typing import List
+import logging
+from typing import List, Optional
 import httpx
 
 from sqlalchemy.orm import Session
 
 from ..models import Relay, Message, Webhook, WebhookDelivery
 from ..database import SessionLocal
+
+logger = logging.getLogger("agent_relay.webhooks")
+
+# Shared httpx client with connection pooling to avoid per-request client overhead
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Get or lazily create a shared httpx.AsyncClient with connection pooling."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=5.0,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+        )
+    return _http_client
 
 
 class WebhookService:
@@ -48,22 +65,22 @@ class WebhookService:
             "created_at": message.created_at.isoformat()
         }
         
+        client = _get_client()
         for attempt in range(1, WebhookService.MAX_RETRIES + 1):
             try:
-                async with httpx.AsyncClient(
-                    timeout=WebhookService.TIMEOUT_SECONDS
-                ) as client:
-                    response = await client.post(webhook.url, json=payload)
-                    
-                    if response.status_code == 200:
-                        await WebhookService._log_delivery(
-                            webhook.id, message.id, "success", attempt
-                        )
-                        return
-                        
+                response = await client.post(webhook.url, json=payload)
+
+                if response.status_code == 200:
+                    await WebhookService._log_delivery(
+                        webhook.id, message.id, "success", attempt
+                    )
+                    logger.info("Webhook %d delivered (attempt %d)", webhook.id, attempt)
+                    return
+
             except Exception as e:
                 error_msg = str(e)
-                
+                logger.warning("Webhook %d attempt %d failed: %s", webhook.id, attempt, error_msg)
+
                 if attempt >= WebhookService.MAX_RETRIES:
                     await WebhookService._log_delivery(
                         webhook.id, message.id, "failed", attempt, error_msg

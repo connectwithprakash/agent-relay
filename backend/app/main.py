@@ -15,7 +15,7 @@ from .schemas import (
     RelayState, SendMessageRequest, SendMessageResponse,
     MessageHistory, MessageSchema,
     RegisterWebhookRequest, RegisterWebhookResponse,
-    WebhookSchema
+    WebhookSchema, RelayListResponse, RelayListItem,
 )
 from .services import PrivacyService, RelayService, WebhookService
 from .repositories import RelayRepository, MessageRepository, WebhookRepository
@@ -54,6 +54,9 @@ class ConnectionManager:
                 (name, ws) for name, ws in self.active_connections[relay_id]
                 if ws != websocket
             ]
+            # Clean up empty relay entries to prevent unbounded memory growth
+            if not self.active_connections[relay_id]:
+                del self.active_connections[relay_id]
 
     async def broadcast_message(self, relay_id: str, message: dict):
         """Broadcast message to all connected WebSockets for this relay"""
@@ -106,6 +109,35 @@ async def create_relay(req: CreateRelayRequest, db: Session = Depends(get_db)):
         agent_names=relay.agent_names,
         current_turn=relay.agent_names[0]
     )
+
+@app.get("/relays", response_model=RelayListResponse)
+async def list_relays(
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """List public relays with pagination"""
+    repo = RelayRepository(db)
+    message_repo = MessageRepository(db)
+    relays = repo.list_public(limit, offset)
+    total_count = repo.count_public()
+
+    # Batch fetch message counts to avoid N+1 queries
+    relay_ids = [relay.id for relay in relays]
+    counts = message_repo.count_by_relay_ids(relay_ids)
+
+    items = []
+    for relay in relays:
+        items.append(RelayListItem(
+            relay_id=relay.id,
+            agent_names=relay.agent_names,
+            current_turn=relay.agent_names[relay.current_turn],
+            message_count=counts.get(relay.id, 0),
+            is_public=relay.is_public,
+            created_at=relay.created_at.isoformat(),
+        ))
+
+    return RelayListResponse(relays=items, total_count=total_count)
 
 @app.get("/relays/{relay_id}", response_model=RelayState)
 async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Depends(get_db)):

@@ -1,7 +1,7 @@
 """
 Relay repository - Database operations for relays
 """
-from typing import Optional
+from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from ..models import Relay
@@ -34,3 +34,22 @@ class RelayRepository:
         """Delete a relay"""
         self.db.delete(relay)
         self.db.commit()
+
+    def list_public(self, limit: int = 20, offset: int = 0) -> List[Relay]:
+        """List public relays with pagination"""
+        return (
+            self.db.query(Relay)
+            .filter(Relay.is_public == True)
+            .order_by(Relay.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+    def count_public(self) -> int:
+        """Count public relays"""
+        return (
+            self.db.query(Relay)
+            .filter(Relay.is_public == True)
+            .count()
+        )

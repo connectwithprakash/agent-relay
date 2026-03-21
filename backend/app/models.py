@@ -2,7 +2,7 @@
 Database models for Agent Relay
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
+from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -32,6 +32,9 @@ class Relay(Base):
 class Message(Base):
     """A message sent by an agent in a relay"""
     __tablename__ = "messages"
+    __table_args__ = (
+        Index('ix_messages_relay_created', 'relay_id', 'created_at'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     relay_id = Column(String, ForeignKey("relays.id"), nullable=False)
@@ -52,6 +55,9 @@ class Message(Base):
 class Webhook(Base):
     """Webhook registration for receiving real-time updates"""
     __tablename__ = "webhooks"
+    __table_args__ = (
+        Index('ix_webhooks_relay_agent', 'relay_id', 'agent_index'),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     relay_id = Column(String, ForeignKey("relays.id"), nullable=False)

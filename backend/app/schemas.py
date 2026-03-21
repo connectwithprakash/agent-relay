@@ -76,6 +76,20 @@ class RegisterWebhookResponse(BaseModel):
     agent: str
 
 
+class RelayListItem(BaseModel):
+    relay_id: str
+    agent_names: list[str]
+    current_turn: str
+    message_count: int
+    is_public: bool
+    created_at: str
+
+
+class RelayListResponse(BaseModel):
+    relays: list[RelayListItem]
+    total_count: int
+
+
 class WebhookSchema(BaseModel):
     id: int
     agent: str
