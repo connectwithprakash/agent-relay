@@ -1,10 +1,11 @@
 """Exception classes for Agent Relay SDK."""
+from typing import Optional
 
 
 class AgentRelayError(Exception):
     """Base exception for Agent Relay SDK errors."""
 
-    def __init__(self, message: str, status_code: int | None = None):
+    def __init__(self, message: str, status_code: Optional[int] = None):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
