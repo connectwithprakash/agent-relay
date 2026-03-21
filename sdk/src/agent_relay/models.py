@@ -11,16 +11,18 @@ class RelayInfo(BaseModel):
 
     relay_id: str
     agent_names: list[str]
-    current_turn: str
+    current_turn: Optional[str] = None
     api_key: Optional[str] = None
     join_code: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "active"
 
 
 class RelayState(BaseModel):
     """Current state of a relay."""
 
     relay_id: str
-    current_turn: str
+    current_turn: Optional[str] = None
     agent_names: list[str]
     message_count: int
     last_message: Optional[str] = None
@@ -28,6 +30,11 @@ class RelayState(BaseModel):
     created_at: str
     is_public: bool = False
     owner_id: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "active"
+    join_code: Optional[str] = None
+    max_agents: int = 10
+    min_agents: int = 2
 
 
 class MessageInfo(BaseModel):

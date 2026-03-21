@@ -27,11 +27,15 @@ class TestCreateRelay:
         assert data["api_key"] is not None
         assert len(data["api_key"]) > 20
 
-    def test_create_relay_default_agents(self, client):
+    def test_create_relay_open(self, client):
+        """Creating a relay without agent_names creates an open relay."""
         response = client.post("/relays", json={})
         assert response.status_code == 200
         data = response.json()
-        assert data["agent_names"] == ["agent_0", "agent_1"]
+        assert data["agent_names"] == []
+        assert data["current_turn"] is None
+        assert data["status"] == "open"
+        assert data["join_code"] is not None
 
     def test_create_relay_three_agents(self, client):
         response = client.post("/relays", json={

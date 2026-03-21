@@ -36,6 +36,8 @@ def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
     """If the relay has a turn timeout and it has elapsed, auto-advance the turn."""
     if relay.turn_timeout is None or relay.turn_started_at is None:
         return
+    if not relay.agent_names or relay.agent_count == 0:
+        return
     now = datetime.now(timezone.utc)
     started = relay.turn_started_at
     if started.tzinfo is None:

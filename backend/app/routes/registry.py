@@ -272,10 +272,16 @@ async def get_relay_by_code(join_code: str, db: Session = Depends(get_db)):
     relay = db.query(Relay).filter(Relay.join_code == join_code.upper()).first()
     if not relay:
         raise HTTPException(status_code=404, detail="Invalid join code")
+    agent_names = relay.agent_names or []
+    current_turn = (
+        agent_names[relay.current_turn]
+        if agent_names and relay.current_turn < len(agent_names)
+        else None
+    )
     return {
         "relay_id": relay.id,
-        "agent_names": relay.agent_names,
-        "current_turn": relay.agent_names[relay.current_turn],
+        "agent_names": agent_names,
+        "current_turn": current_turn,
         "join_code": relay.join_code,
     }
 
@@ -294,17 +300,28 @@ async def join_by_code(
     if not relay:
         raise HTTPException(status_code=404, detail="Invalid join code")
 
-    # Add agent to relay if not already present
-    if agent_name not in relay.agent_names:
-        relay.agent_names = relay.agent_names + [agent_name]
-        relay.agent_count = len(relay.agent_names)
-        db.commit()
+    agent_names = relay.agent_names or []
 
+    # Add agent to relay if not already present
+    if agent_name not in agent_names:
+        relay.agent_names = agent_names + [agent_name]
+        relay.agent_count = len(relay.agent_names)
+        # Start turn timer if this is transitioning from open to active
+        if not agent_names and relay.turn_started_at is None:
+            relay.turn_started_at = datetime.now(timezone.utc)
+        db.commit()
+        agent_names = relay.agent_names
+
+    current_turn = (
+        agent_names[relay.current_turn]
+        if agent_names and relay.current_turn < len(agent_names)
+        else None
+    )
     return {
         "relay_id": relay.id,
         "join_code": relay.join_code,
-        "agent_names": relay.agent_names,
-        "current_turn": relay.agent_names[relay.current_turn],
+        "agent_names": agent_names,
+        "current_turn": current_turn,
     }
 
 

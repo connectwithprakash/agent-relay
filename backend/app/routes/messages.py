@@ -136,7 +136,13 @@ async def skip_turn(
                 detail=f"Turn has not timed out yet. {remaining:.0f}s remaining."
             )
 
-        skipped_agent = relay.agent_names[relay.current_turn]
+        agent_names = relay.agent_names or []
+        if not agent_names:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot skip turn: relay has no agents."
+            )
+        skipped_agent = agent_names[relay.current_turn]
         next_turn = RelayService.advance_turn(db, relay)
 
     return {

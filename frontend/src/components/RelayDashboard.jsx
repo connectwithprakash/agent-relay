@@ -85,7 +85,7 @@ export default function RelayDashboard({ relayId, agentName }) {
     );
   }
 
-  const agents = relay?.agents || [];
+  const agents = relay?.agent_names || relay?.agents || [];
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-950">

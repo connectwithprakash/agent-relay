@@ -27,8 +27,8 @@ class TestRelayEdgeCases:
         assert len(data["agent_names"]) == 10
 
     def test_create_relay_too_many_agents(self, client):
-        """Creating a relay with 11 agents should fail validation."""
-        agents = [f"agent_{i}" for i in range(11)]
+        """Creating a relay with 21 agents should fail validation."""
+        agents = [f"agent_{i}" for i in range(21)]
         response = client.post("/relays", json={
             "agent_names": agents,
             "is_public": True,

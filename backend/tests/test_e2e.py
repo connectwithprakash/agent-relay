@@ -466,8 +466,8 @@ class TestValidation:
         assert r.status_code == 422
 
     def test_too_many_agents_rejected(self, client):
-        """Relay with more than 10 agents is rejected."""
-        names = [f"agent_{i}" for i in range(11)]
+        """Relay with more than 20 agents is rejected."""
+        names = [f"agent_{i}" for i in range(21)]
         r = client.post(
             "/relays",
             json={"agent_names": names},

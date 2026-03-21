@@ -4,7 +4,7 @@ Pydantic schemas for request/response validation
 import json
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Maximum serialized size for structured data payloads (64 KB)
 MAX_DATA_SIZE_BYTES = 65536
@@ -46,7 +46,7 @@ class CreateRelayResponse(BaseModel):
 
 class RelayState(BaseModel):
     relay_id: str
-    current_turn: str
+    current_turn: Optional[str] = None
     agent_names: list[str]
     message_count: int
     last_message: Optional[str] = None
@@ -54,6 +54,11 @@ class RelayState(BaseModel):
     created_at: str
     is_public: bool = False
     owner_id: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "active"
+    join_code: Optional[str] = None
+    max_agents: int = 10
+    min_agents: int = 2
 
 
 # Message Schemas
@@ -83,15 +88,14 @@ class SendMessageResponse(BaseModel):
 
 
 class MessageSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     agent: str
     content: Optional[str] = None
     data: Optional[dict] = None
     type: str
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class MessageHistory(BaseModel):
@@ -129,10 +133,9 @@ class RegisterWebhookResponse(BaseModel):
 
 
 class WebhookSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     agent: str
     url: str
     created_at: str
-
-    class Config:
-        from_attributes = True

@@ -200,7 +200,7 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
 
         {/* Agent avatars */}
         <div className="flex justify-center gap-2 mb-6">
-          {(createdRelay.agents || agentNames).map((name) => (
+          {(createdRelay.agent_names || createdRelay.agents || agentNames).map((name) => (
             <div key={name} className="flex flex-col items-center gap-1">
               <AgentAvatar name={name} size="md" />
               <span className="text-xs text-slate-500 dark:text-slate-400">{name}</span>
@@ -291,7 +291,7 @@ export default function CreateRelayPage() {
 
   const handleGoToRelay = () => {
     if (createdRelay) {
-      const firstAgent = createdRelay.agents?.[0] || agentNames[0];
+      const firstAgent = createdRelay.agent_names?.[0] || createdRelay.agents?.[0] || agentNames[0];
       navigate(`/relay/${createdRelay.relay_id}?agent=${encodeURIComponent(firstAgent)}`);
     }
   };

@@ -21,15 +21,19 @@ export const getRelay = async (relayId, ownerId = null) => {
 /**
  * Create a new relay
  */
-export const createRelay = async (agentNames, ownerId = null, isPublic = false) => {
+export const createRelay = async (agentNames, ownerId = null, isPublic = false, options = {}) => {
+  const body = {
+    agent_names: agentNames,
+    owner_id: ownerId,
+    is_public: isPublic,
+  };
+  if (options.description) body.description = options.description;
+  if (options.max_agents) body.max_agents = options.max_agents;
+  if (options.min_agents) body.min_agents = options.min_agents;
   const response = await fetch(`${API_BASE_URL}/relays`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      agent_names: agentNames,
-      owner_id: ownerId,
-      is_public: isPublic
-    }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`Failed to create relay: ${response.statusText}`);
   return await response.json();

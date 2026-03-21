@@ -52,10 +52,13 @@ class RelayService:
             owner_id=request.owner_id,
             api_key_hash=api_key_hash,
             join_code=join_code,
-            turn_timeout=getattr(request, 'turn_timeout', None),
+            turn_timeout=request.turn_timeout,
             turn_started_at=datetime.now(timezone.utc) if not is_open else None,
-            description=getattr(request, 'description', None),
-            agent_instructions=getattr(request, 'agent_instructions', None),
+            description=request.description,
+            agent_instructions=request.agent_instructions,
+            max_agents=request.max_agents,
+            min_agents=request.min_agents,
+            max_skip_count=request.max_skip_count,
         )
 
         repo = RelayRepository(db)
@@ -78,54 +81,80 @@ class RelayService:
         message_count = message_repo.count_by_relay_id(relay.id)
         last_message = message_repo.get_last_message(relay.id)
         
+        agent_names = relay.agent_names or []
+        current_turn = (
+            agent_names[relay.current_turn]
+            if agent_names and relay.current_turn < len(agent_names)
+            else None
+        )
+        status = "open" if not agent_names else "active"
+
         return RelayState(
             relay_id=relay.id,
-            current_turn=relay.agent_names[relay.current_turn],
-            agent_names=relay.agent_names,
+            current_turn=current_turn,
+            agent_names=agent_names,
             message_count=message_count,
             last_message=last_message.content if last_message else None,
             last_agent=last_message.agent_name if last_message else None,
             created_at=relay.created_at.isoformat(),
             is_public=relay.is_public,
-            owner_id=relay.owner_id
+            owner_id=relay.owner_id,
+            description=relay.description,
+            status=status,
+            join_code=relay.join_code,
+            max_agents=relay.max_agents,
+            min_agents=relay.min_agents,
         )
     
     @staticmethod
     def validate_agent(relay: Relay, agent: Optional[str]) -> Tuple[str, int]:
         """
         Validate agent exists and get agent info.
-        
+
         Returns:
             Tuple of (agent_name, agent_index)
-            
+
         Raises:
-            ValueError if agent is unknown
+            ValueError if agent is unknown or relay has no agents
         """
+        agent_names = relay.agent_names or []
+        if not agent_names:
+            raise ValueError("Relay has no agents yet (open relay)")
+
         if agent is None:
-            agent = relay.agent_names[relay.current_turn]
-        
-        if agent not in relay.agent_names:
+            agent = agent_names[relay.current_turn]
+
+        if agent not in agent_names:
             raise ValueError(f"Unknown agent '{agent}'")
-        
-        return agent, relay.agent_names.index(agent)
+
+        return agent, agent_names.index(agent)
     
     @staticmethod
     def validate_turn(relay: Relay, agent_index: int) -> None:
         """
         Validate it's the agent's turn.
-        
+
         Raises:
             ValueError if not the agent's turn
         """
+        agent_names = relay.agent_names or []
         if agent_index != relay.current_turn:
+            current = (
+                agent_names[relay.current_turn]
+                if agent_names and relay.current_turn < len(agent_names)
+                else "unknown"
+            )
             raise ValueError(
-                f"Not turn. Current turn: {relay.agent_names[relay.current_turn]}"
+                f"Not turn. Current turn: {current}"
             )
     
     @staticmethod
     def advance_turn(db: Session, relay: Relay) -> str:
         """Advance to next agent's turn and return next agent name"""
+        agent_names = relay.agent_names or []
+        if not agent_names or relay.agent_count == 0:
+            raise ValueError("Cannot advance turn: relay has no agents")
         relay.current_turn = (relay.current_turn + 1) % relay.agent_count
         relay.turn_started_at = datetime.now(timezone.utc)
         db.commit()
-        return relay.agent_names[relay.current_turn]
+        return agent_names[relay.current_turn]

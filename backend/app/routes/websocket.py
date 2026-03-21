@@ -29,7 +29,7 @@ async def websocket_endpoint(
             await websocket.close(code=4004, reason="Relay not found")
             return
 
-        if agent not in relay.agent_names:
+        if not relay.agent_names or agent not in relay.agent_names:
             await websocket.close(code=4003, reason="Unknown agent")
             return
 
