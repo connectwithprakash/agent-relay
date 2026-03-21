@@ -23,7 +23,12 @@ describe('MessageInput', () => {
 
   it('shows waiting message when it is not the agent turn', () => {
     render(<MessageInput {...defaultProps} currentTurn="agent-2" />);
-    expect(screen.getByText(/agent-2's turn/i)).toBeInTheDocument();
+    // Agent name and "'s" are split across elements, so match on text content
+    expect(screen.getByText((_, el) =>
+      el?.tagName === 'P' &&
+      el?.textContent?.includes('agent-2') &&
+      el?.textContent?.includes('turn to send a message')
+    )).toBeInTheDocument();
   });
 
   it('disables send button when message is empty', () => {

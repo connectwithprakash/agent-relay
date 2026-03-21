@@ -51,8 +51,10 @@ describe('MessageList', () => {
     const { container } = render(
       <MessageList messages={mockMessages} currentAgent="agent-1" />
     );
-    const messageContainers = container.querySelectorAll('.justify-end');
-    // agent-1 messages should be right-aligned
-    expect(messageContainers.length).toBe(1);
+    // Select only the top-level message row containers (direct children of the scrollable list)
+    const messageRows = container.querySelectorAll('.space-y-4 > div.animate-fade-in');
+    const rightAligned = Array.from(messageRows).filter(el => el.classList.contains('justify-end'));
+    // Only agent-1 messages should be right-aligned
+    expect(rightAligned.length).toBe(1);
   });
 });
