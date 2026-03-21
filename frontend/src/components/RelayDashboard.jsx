@@ -3,23 +3,12 @@ import { useRelay, useWebSocket, useMessages } from '../hooks';
 import TurnIndicator from './TurnIndicator';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
+import ConnectionBadge from './ConnectionBadge';
+import AgentAvatar from './AgentAvatar';
 
-/**
- * RelayDashboard - Main relay interface component
- *
- * REFACTORED for SOLID principles:
- * - Single Responsibility: Only handles UI rendering and composition
- * - Open/Closed: Extensible through hooks configuration
- * - Dependency Inversion: Depends on hooks abstraction, not direct API calls
- *
- * Before: 128 lines with mixed concerns (data fetching, WebSocket, state, UI)
- * After: ~80 lines focused on UI composition
- */
 export default function RelayDashboard({ relayId, agentName }) {
-  // Relay state management (replaces useEffect + useState combo)
   const { relay, loading: relayLoading, error: relayError, updateRelay } = useRelay(relayId);
 
-  // Message state management
   const {
     messages,
     loading: messagesLoading,
@@ -28,20 +17,16 @@ export default function RelayDashboard({ relayId, agentName }) {
     send: sendMessageFn,
   } = useMessages(relayId, agentName);
 
-  // WebSocket URL configuration
   const wsUrl = useMemo(() => {
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const wsProtocol = apiUrl.replace('https://', 'wss://').replace('http://', 'ws://');
     return `${wsProtocol}/relays/${relayId}/ws?agent=${agentName}`;
   }, [relayId, agentName]);
 
-  // WebSocket connection with auto-reconnection
   const { connectionStatus } = useWebSocket(wsUrl, {
     enabled: !!relayId && !!agentName,
     onMessage: (message) => {
-      // Add new message from WebSocket
       addMessage(message);
-      // Update relay state with new turn
       if (message.next_turn) {
         updateRelay({ current_turn: message.next_turn });
       }
@@ -52,10 +37,8 @@ export default function RelayDashboard({ relayId, agentName }) {
     maxReconnectAttempts: 5,
   });
 
-  // Handle message sending
   const handleSendMessage = async (content) => {
     const response = await sendMessageFn(content);
-    // Update relay with new turn from API response
     if (response?.next_turn) {
       updateRelay({ current_turn: response.next_turn });
     }
@@ -64,10 +47,10 @@ export default function RelayDashboard({ relayId, agentName }) {
   // Loading state
   if (relayLoading || messagesLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-400">Loading relay...</p>
+      <div className="flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950">
+        <div className="text-center animate-fade-in">
+          <div className="w-12 h-12 border-3 border-indigo-200 dark:border-indigo-800 border-t-indigo-600 dark:border-t-indigo-400 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500 dark:text-slate-400 font-medium">Loading relay...</p>
         </div>
       </div>
     );
@@ -77,12 +60,19 @@ export default function RelayDashboard({ relayId, agentName }) {
   const error = relayError || messagesError;
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900">
-        <div className="bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-6 py-4 rounded-lg max-w-md">
-          <p className="font-bold mb-2">Error</p>
-          <p>{error}</p>
+      <div className="flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 px-4">
+        <div className="max-w-md w-full p-6 bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-red-200 dark:border-red-800 animate-scale-in">
+          <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white text-center mb-2">
+            Connection Error
+          </h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400 text-center">{error}</p>
           {connectionStatus === 'failed' && (
-            <p className="mt-2 text-sm">
+            <p className="text-xs text-slate-400 dark:text-slate-500 text-center mt-2">
               WebSocket connection failed after maximum retry attempts.
             </p>
           )}
@@ -91,51 +81,71 @@ export default function RelayDashboard({ relayId, agentName }) {
     );
   }
 
+  const agents = relay?.agents || [];
+
   return (
-    <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900">
-      {/* Header */}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
-            Agent Relay Dashboard
-          </h1>
-          <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
-            <span>
-              Relay ID: <span className="font-mono">{relayId}</span>
-            </span>
-            <span>•</span>
-            <span>
-              Agent: <span className="font-semibold">{agentName}</span>
-            </span>
-            <span>•</span>
-            <span>Messages: {relay?.message_count || messages.length}</span>
-            <span>•</span>
-            <span className={`font-medium ${
-              connectionStatus === 'connected' ? 'text-green-500' :
-              connectionStatus === 'reconnecting' ? 'text-yellow-500' :
-              connectionStatus === 'connecting' ? 'text-blue-500' :
-              'text-gray-500'
-            }`}>
-              {connectionStatus === 'connected' ? '● Live' :
-               connectionStatus === 'reconnecting' ? '◐ Reconnecting...' :
-               connectionStatus === 'connecting' ? '○ Connecting...' :
-               '○ Offline'}
-            </span>
+    <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-950">
+      {/* Dashboard Header */}
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3">
+        <div className="max-w-5xl mx-auto">
+          {/* Top row */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">
+                Relay Dashboard
+              </h1>
+              <ConnectionBadge status={connectionStatus} />
+            </div>
+            <div className="hidden sm:flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+              </svg>
+              <span className="font-mono">{relayId.substring(0, 12)}...</span>
+            </div>
+          </div>
+
+          {/* Agent row */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {/* Agent avatars */}
+              <div className="flex items-center -space-x-1.5">
+                {agents.map((agent) => (
+                  <AgentAvatar
+                    key={agent}
+                    name={agent}
+                    size="xs"
+                    active={agent === relay?.current_turn}
+                  />
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                <span>
+                  Viewing as <span className="font-semibold text-slate-900 dark:text-white">{agentName}</span>
+                </span>
+                <span className="text-slate-300 dark:text-slate-600">|</span>
+                <span>{relay?.message_count || messages.length} messages</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 max-w-6xl w-full mx-auto flex flex-col my-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+      {/* Main chat area */}
+      <div className="flex-1 max-w-5xl w-full mx-auto flex flex-col my-3 sm:my-4 mx-3 sm:mx-auto bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Turn Indicator */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <TurnIndicator currentTurn={relay?.current_turn} agentName={agentName} />
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+          <TurnIndicator
+            currentTurn={relay?.current_turn}
+            agentName={agentName}
+            agents={agents}
+          />
         </div>
 
-        {/* Message List */}
+        {/* Messages */}
         <MessageList messages={messages} currentAgent={agentName} />
 
-        {/* Message Input */}
+        {/* Input */}
         <MessageInput
           onSendMessage={handleSendMessage}
           currentTurn={relay?.current_turn}

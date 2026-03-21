@@ -51,7 +51,7 @@ describe('MessageList', () => {
     const { container } = render(
       <MessageList messages={mockMessages} currentAgent="agent-1" />
     );
-    const messageContainers = container.querySelectorAll('.flex.justify-end');
+    const messageContainers = container.querySelectorAll('.justify-end');
     // agent-1 messages should be right-aligned
     expect(messageContainers.length).toBe(1);
   });
