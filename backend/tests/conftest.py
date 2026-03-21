@@ -114,3 +114,12 @@ def relay_id(client):
     resp = client.post("/relays", json={"agent_names": ["alice", "bob"]})
     assert resp.status_code == 200
     return resp.json()["relay_id"]
+
+
+@pytest.fixture()
+def relay_with_key(client):
+    """Create a relay and return (relay_id, api_key) tuple."""
+    resp = client.post("/relays", json={"agent_names": ["alice", "bob"]})
+    assert resp.status_code == 200
+    data = resp.json()
+    return data["relay_id"], data["api_key"]
