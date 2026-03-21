@@ -145,7 +145,7 @@ class AsyncAgentRelayClient:
         Raises:
             TimeoutError: If the agent's turn does not arrive within *timeout* seconds.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
         while loop.time() - start < timeout:
             state = await self.get_relay(relay_id)

@@ -10,6 +10,9 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of buffered SSE messages per spectator before dropping
+SPECTATOR_QUEUE_MAXSIZE = 256
+
 
 class ConnectionManager:
     def __init__(self):

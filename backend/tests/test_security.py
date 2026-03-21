@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.utils.url_validator import validate_webhook_url
+from app.utils.url_validator import validate_webhook_url, settings as url_validator_settings
 
 
 # ---------------------------------------------------------------------------
@@ -25,8 +25,8 @@ class TestWebhookUrlValidation:
 
     @pytest.fixture(autouse=True)
     def _force_production(self, monkeypatch):
-        """Ensure ENVIRONMENT is NOT 'development' during these tests."""
-        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        """Ensure environment is NOT 'development' during these tests."""
+        monkeypatch.setattr(url_validator_settings, "environment", "production")
 
     def test_allows_public_https_url(self):
         assert validate_webhook_url("https://example.com/webhook") is True
@@ -68,13 +68,18 @@ class TestWebhookUrlValidation:
         assert validate_webhook_url("http://") is False
 
     def test_allows_all_in_development(self, monkeypatch):
-        monkeypatch.setenv("ENVIRONMENT", "development")
+        monkeypatch.setattr(url_validator_settings, "environment", "development")
         assert validate_webhook_url("http://localhost/hook") is True
         assert validate_webhook_url("http://10.0.0.1/hook") is True
 
 
 class TestWebhookEndpointValidation:
     """Test that the webhook registration endpoint rejects unsafe URLs."""
+
+    @pytest.fixture(autouse=True)
+    def _force_production(self, monkeypatch):
+        """Ensure environment is NOT 'development' during these tests."""
+        monkeypatch.setattr(url_validator_settings, "environment", "production")
 
     def test_register_webhook_rejects_private_url(self, client, relay_with_key):
         relay_id, api_key = relay_with_key

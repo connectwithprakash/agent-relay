@@ -4,9 +4,10 @@ URL validation utilities to prevent SSRF attacks.
 Validates webhook URLs to ensure they don't target internal/private networks.
 """
 import ipaddress
-import os
 import socket
 from urllib.parse import urlparse
+
+from ..config import settings
 
 
 # Private IP ranges that should be blocked in production
@@ -38,7 +39,7 @@ def validate_webhook_url(url: str) -> bool:
     Returns True if the URL is safe, False otherwise.
     In development mode (ENVIRONMENT=development), all URLs are allowed.
     """
-    if os.environ.get("ENVIRONMENT") == "development":
+    if settings.environment == "development":
         return True
 
     try:

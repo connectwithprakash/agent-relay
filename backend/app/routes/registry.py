@@ -8,11 +8,12 @@ import string
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import AgentRegistration, Relay
+from ..rate_limit import limiter
 
 router = APIRouter()
 
@@ -38,10 +39,14 @@ def _agent_to_dict(r: AgentRegistration) -> dict:
 
 
 @router.get("/agents/search")
+@limiter.limit("30/minute")
 async def search_agents(
+    request: Request,
     capability: Optional[str] = None,
     namespace: Optional[str] = None,
     status: str = "ready",
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
     """Search for agents by capability across all namespaces."""
@@ -51,14 +56,21 @@ async def search_agents(
     if status:
         query = query.filter(AgentRegistration.status == status)
 
-    results = query.all()
-
-    # Filter by capability (JSON array contains)
+    # Filter by capability (JSON array contains) - must load all for in-memory filter
     if capability:
-        results = [r for r in results if r.capabilities and capability in r.capabilities]
+        all_results = query.all()
+        filtered = [r for r in all_results if r.capabilities and capability in r.capabilities]
+        total = len(filtered)
+        results = filtered[offset : offset + limit]
+    else:
+        total = query.count()
+        results = query.offset(offset).limit(limit).all()
 
     return {
         "agents": [_agent_to_dict(r) for r in results],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 
@@ -222,11 +234,26 @@ async def register_agent(
 
 
 @router.get("/agents/discover/{namespace}")
-async def discover_agents(namespace: str, db: Session = Depends(get_db)):
+@limiter.limit("30/minute")
+async def discover_agents(
+    namespace: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
     """Discover all agents and relays in a namespace."""
-    registrations = db.query(AgentRegistration).filter(
+    base_query = db.query(AgentRegistration).filter(
         AgentRegistration.namespace == namespace,
-    ).all()
+    )
+    total = base_query.count()
+    registrations = base_query.offset(offset).limit(limit).all()
+
+    # Get the relay_id from any registration in this namespace (not just paginated results)
+    first_with_relay = db.query(AgentRegistration.relay_id).filter(
+        AgentRegistration.namespace == namespace,
+        AgentRegistration.relay_id != None,  # noqa: E711
+    ).first()
 
     return {
         "namespace": namespace,
@@ -242,11 +269,10 @@ async def discover_agents(namespace: str, db: Session = Depends(get_db)):
             }
             for r in registrations
         ],
-        "relay_id": (
-            registrations[0].relay_id
-            if registrations and registrations[0].relay_id
-            else None
-        ),
+        "relay_id": first_with_relay[0] if first_with_relay else None,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 

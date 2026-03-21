@@ -10,10 +10,13 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_db
 from ..services import PrivacyService
-from ..websocket_manager import manager
+from ..websocket_manager import manager, SPECTATOR_QUEUE_MAXSIZE
 from .relays import get_relay_or_404
 
 router = APIRouter()
+
+# Seconds to wait for a message before sending a keep-alive comment
+SSE_HEARTBEAT_TIMEOUT_SECONDS = 30
 
 
 @router.get("/relays/{relay_id}/watch")
@@ -31,14 +34,14 @@ async def watch_relay(relay_id: str, request: Request, db: Session = Depends(get
         raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
 
     async def event_generator():
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=SPECTATOR_QUEUE_MAXSIZE)
         manager.add_spectator(relay_id, queue)
         try:
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    message = await asyncio.wait_for(queue.get(), timeout=30)
+                    message = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_TIMEOUT_SECONDS)
                     yield {"event": "message", "data": json.dumps(message)}
                 except asyncio.TimeoutError:
                     # Send keep-alive comment to prevent connection timeout

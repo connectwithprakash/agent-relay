@@ -2,12 +2,16 @@
 Pydantic schemas for request/response validation
 """
 import json
+import re
 from datetime import datetime
 from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Maximum serialized size for structured data payloads (64 KB)
 MAX_DATA_SIZE_BYTES = 65536
+
+# Pattern for valid agent names: alphanumeric, underscores, and hyphens only
+_AGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 # Relay Schemas
@@ -24,13 +28,23 @@ class CreateRelayRequest(BaseModel):
 
     @field_validator('agent_names')
     @classmethod
-    def no_duplicates(cls, v):
+    def validate_agent_names(cls, v):
         if v is None:
             return v
         if len(v) != len(set(v)):
             raise ValueError('Agent names must be unique')
         if len(v) < 2:
             raise ValueError('Need at least 2 agent names')
+        for name in v:
+            if not (1 <= len(name) <= 100):
+                raise ValueError(
+                    f'Agent name must be between 1 and 100 characters, got {len(name)}'
+                )
+            if not _AGENT_NAME_PATTERN.match(name):
+                raise ValueError(
+                    f'Agent name "{name}" contains invalid characters. '
+                    'Only alphanumeric characters, underscores, and hyphens are allowed.'
+                )
         return v
 
 
