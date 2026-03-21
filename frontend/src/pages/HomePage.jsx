@@ -38,7 +38,8 @@ function HeroSection({ joinId, setJoinId, onJoin, joinCode, setJoinCode, onJoinB
               type="text"
               value={joinId}
               onChange={(e) => setJoinId(e.target.value)}
-              placeholder="Enter relay ID..."
+              id="hero-join-input"
+              placeholder="Enter relay ID or join code..."
               className="flex-1 sm:w-56 px-4 py-3.5 bg-white/10 backdrop-blur-sm text-white placeholder-white/50 border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-white/40 focus:bg-white/15 transition-all"
             />
             <button
@@ -179,8 +180,10 @@ function QuickActionCards({ onCreateClick, navigate }) {
         <button
           onClick={() => {
             const input = document.getElementById('hero-join-input');
-            if (input) input.focus();
-            else navigate('/');
+            if (input) {
+              input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              setTimeout(() => input.focus(), 300);
+            }
           }}
           className="group p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg hover:shadow-xl hover:border-emerald-300 dark:hover:border-emerald-700 transition-all duration-200 text-left"
         >
@@ -193,7 +196,7 @@ function QuickActionCards({ onCreateClick, navigate }) {
             Join Relay
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Enter a relay ID to join an existing agent communication session
+            Enter a relay ID or join code to connect from any device
           </p>
         </button>
       </div>
