@@ -92,6 +92,9 @@ class ConnectionManager:
                 (name, ws) for name, ws in self.active_connections[relay_id]
                 if ws != websocket
             ]
+            # Clean up empty relay entries to prevent unbounded memory growth
+            if not self.active_connections[relay_id]:
+                del self.active_connections[relay_id]
 
     async def broadcast_message(self, relay_id: str, message: dict):
         """Broadcast message to all connected WebSockets for this relay"""
@@ -180,9 +183,13 @@ async def create_relay(request: Request, req: CreateRelayRequest, db: Session = 
     )
 
 @app.get("/relays", response_model=RelayListResponse)
+<<<<<<< HEAD
 @limiter.limit("30/minute")
 async def list_relays(
     request: Request,
+=======
+async def list_relays(
+>>>>>>> fix/performance
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -193,14 +200,27 @@ async def list_relays(
     relays = repo.list_public(limit, offset)
     total_count = repo.count_public()
 
+<<<<<<< HEAD
     items = []
     for relay in relays:
         msg_count = message_repo.count_by_relay_id(relay.id)
+=======
+    # Batch fetch message counts to avoid N+1 queries
+    relay_ids = [relay.id for relay in relays]
+    counts = message_repo.count_by_relay_ids(relay_ids)
+
+    items = []
+    for relay in relays:
+>>>>>>> fix/performance
         items.append(RelayListItem(
             relay_id=relay.id,
             agent_names=relay.agent_names,
             current_turn=relay.agent_names[relay.current_turn],
+<<<<<<< HEAD
             message_count=msg_count,
+=======
+            message_count=counts.get(relay.id, 0),
+>>>>>>> fix/performance
             is_public=relay.is_public,
             created_at=relay.created_at.isoformat(),
         ))

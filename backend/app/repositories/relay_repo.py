@@ -1,7 +1,11 @@
 """
 Relay repository - Database operations for relays
 """
+<<<<<<< HEAD
 from typing import Optional, List
+=======
+from typing import List, Optional
+>>>>>>> fix/performance
 from sqlalchemy.orm import Session
 
 from ..models import Relay
@@ -48,4 +52,12 @@ class RelayRepository:
 
     def count_public(self) -> int:
         """Count public relays"""
+<<<<<<< HEAD
         return self.db.query(Relay).filter(Relay.is_public == True).count()
+=======
+        return (
+            self.db.query(Relay)
+            .filter(Relay.is_public == True)
+            .count()
+        )
+>>>>>>> fix/performance

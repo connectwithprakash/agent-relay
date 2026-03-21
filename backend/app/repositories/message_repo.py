@@ -1,7 +1,8 @@
 """
 Message repository - Database operations for messages
 """
-from typing import List, Optional
+from typing import Dict, List, Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..models import Message
@@ -36,6 +37,18 @@ class MessageRepository:
             .filter(Message.relay_id == relay_id)
             .count()
         )
+
+    def count_by_relay_ids(self, relay_ids: List[str]) -> Dict[str, int]:
+        """Count messages for multiple relays in a single query using GROUP BY"""
+        if not relay_ids:
+            return {}
+        results = (
+            self.db.query(Message.relay_id, func.count(Message.id))
+            .filter(Message.relay_id.in_(relay_ids))
+            .group_by(Message.relay_id)
+            .all()
+        )
+        return {relay_id: count for relay_id, count in results}
     
     def get_last_message(self, relay_id: str) -> Optional[Message]:
         """Get the most recent message for a relay"""
