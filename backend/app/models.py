@@ -23,6 +23,12 @@ class Relay(Base):
     join_code = Column(String(6), unique=True, nullable=True, index=True)  # Short human-readable join code
     turn_timeout = Column(Integer, nullable=True)  # Seconds per turn, None = no timeout
     turn_started_at = Column(DateTime, nullable=True)  # When the current turn began
+    description = Column(Text, nullable=True)  # What this relay is for
+    agent_instructions = Column(JSON, nullable=True)  # Per-agent instructions {"agent": "instruction"}
+    max_agents = Column(Integer, default=10)  # Max agents allowed
+    min_agents = Column(Integer, default=2)  # Min agents before turns start
+    turns_waited = Column(JSON, nullable=True)  # Starvation tracking {"agent": count}
+    max_skip_count = Column(Integer, default=3)  # Max skips before forced turn
 
     # Relationships
     messages = relationship("Message", back_populates="relay", cascade="all, delete-orphan")

@@ -54,9 +54,11 @@ async def create_relay(request: Request, req: CreateRelayRequest, db: Session = 
     return CreateRelayResponse(
         relay_id=relay.id,
         agent_names=relay.agent_names,
-        current_turn=relay.agent_names[0],
+        current_turn=relay.agent_names[0] if relay.agent_names else None,
         api_key=api_key,
         join_code=relay.join_code,
+        description=relay.description,
+        status="open" if not relay.agent_names else "active",
     )
 
 

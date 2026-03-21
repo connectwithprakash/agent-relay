@@ -40,17 +40,22 @@ class RelayService:
         api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         join_code = RelayService.generate_join_code()
 
+        agent_names = request.agent_names or []
+        is_open = len(agent_names) == 0
+
         relay = Relay(
             id=relay_id,
-            agent_names=request.agent_names,
-            agent_count=len(request.agent_names),
+            agent_names=agent_names,
+            agent_count=len(agent_names),
             current_turn=0,
             is_public=request.is_public,
             owner_id=request.owner_id,
             api_key_hash=api_key_hash,
             join_code=join_code,
             turn_timeout=getattr(request, 'turn_timeout', None),
-            turn_started_at=datetime.now(timezone.utc),
+            turn_started_at=datetime.now(timezone.utc) if not is_open else None,
+            description=getattr(request, 'description', None),
+            agent_instructions=getattr(request, 'agent_instructions', None),
         )
 
         repo = RelayRepository(db)

@@ -12,25 +12,36 @@ MAX_DATA_SIZE_BYTES = 65536
 
 # Relay Schemas
 class CreateRelayRequest(BaseModel):
-    agent_names: list[str] = Field(default=["agent_0", "agent_1"], min_length=2, max_length=10)
+    agent_names: Optional[list[str]] = Field(default=None, max_length=20)
     is_public: bool = False
     owner_id: Optional[str] = None
+    description: Optional[str] = None
+    agent_instructions: Optional[dict] = None
     turn_timeout: Optional[int] = Field(default=None, ge=1, description="Seconds per turn before auto-advance. None = no timeout.")
+    max_agents: int = Field(default=10, ge=2, le=20)
+    min_agents: int = Field(default=2, ge=2, le=20)
+    max_skip_count: int = Field(default=3, ge=1, le=20)
 
     @field_validator('agent_names')
     @classmethod
     def no_duplicates(cls, v):
+        if v is None:
+            return v
         if len(v) != len(set(v)):
             raise ValueError('Agent names must be unique')
+        if len(v) < 2:
+            raise ValueError('Need at least 2 agent names')
         return v
 
 
 class CreateRelayResponse(BaseModel):
     relay_id: str
     agent_names: list[str]
-    current_turn: str
+    current_turn: Optional[str] = None
     api_key: Optional[str] = None
     join_code: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "active"
 
 
 class RelayState(BaseModel):
