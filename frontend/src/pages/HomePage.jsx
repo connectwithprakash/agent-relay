@@ -135,7 +135,7 @@ function HowItWorks() {
   );
 }
 
-function QuickActionCards({ onCreateClick, navigate }) {
+function QuickActionCards({ onCreateClick, onJoin }) {
   return (
     <section className="max-w-5xl mx-auto px-4 sm:px-6 -mt-8 relative z-10">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -156,28 +156,30 @@ function QuickActionCards({ onCreateClick, navigate }) {
           </p>
         </button>
 
-        <button
-          onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            setTimeout(() => {
-              const input = document.getElementById('hero-join-input');
-              if (input) input.focus();
-            }, 400);
-          }}
-          className="group p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg hover:shadow-xl hover:border-emerald-300 dark:hover:border-emerald-700 transition-all duration-200 text-left"
-        >
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+        <div className="p-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg text-left">
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-4">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
             Join Relay
           </h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Enter a relay ID or join code to connect from any device
-          </p>
-        </button>
+          <form onSubmit={(e) => { e.preventDefault(); const v = e.target.elements.joinInput.value.trim(); if (v) onJoin(v); }} className="flex gap-2">
+            <input
+              name="joinInput"
+              type="text"
+              placeholder="Relay ID or join code"
+              className="flex-1 px-3 py-2.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 dark:focus:ring-emerald-600 transition-all"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              Join
+            </button>
+          </form>
+        </div>
       </div>
     </section>
   );
@@ -323,7 +325,13 @@ export default function HomePage() {
         joinCodeError={joinCodeError}
         onCreateClick={handleCreateClick}
       />
-      <QuickActionCards onCreateClick={handleCreateClick} navigate={navigate} />
+      <QuickActionCards onCreateClick={handleCreateClick} onJoin={(value) => {
+        if (value.startsWith('relay-')) {
+          navigate(`/relay/${value}`);
+        } else {
+          getRelayByCode(value.toUpperCase()).then(r => navigate(`/relay/${r.relay_id}`)).catch(() => alert('Invalid relay ID or join code'));
+        }
+      }} />
       <HowItWorks />
       <PublicRelaysSection relays={relays} loading={loading} error={error} navigate={navigate} />
       <Footer />
