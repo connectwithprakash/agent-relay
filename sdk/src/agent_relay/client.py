@@ -182,15 +182,38 @@ class AgentRelayClient:
 
     # -- Discovery operations --
 
-    def register(self, namespace: str, agent_name: str, device_id: str | None = None) -> dict:
+    def register(
+        self,
+        namespace: str,
+        agent_name: str,
+        device_id: str | None = None,
+        description: str | None = None,
+        capabilities: list[str] | str | None = None,
+    ) -> dict:
         """Register this agent in a namespace for cross-device discovery.
 
-        Returns relay info if a relay exists or is created, or a 'waiting' status
-        if not enough agents have joined yet.
+        Args:
+            namespace: The shared namespace to join.
+            agent_name: This agent's name.
+            device_id: Optional device identifier.
+            description: What this agent does (e.g. "Reviews Python code for bugs").
+            capabilities: Skills as a list or comma-separated string
+                (e.g. ["code_review", "python"] or "code_review,python").
+
+        Returns:
+            Relay info if a relay exists or is created, or a 'waiting' status
+            if not enough agents have joined yet.
         """
         params: dict[str, str] = {"namespace": namespace, "agent_name": agent_name}
         if device_id:
             params["device_id"] = device_id
+        if description:
+            params["description"] = description
+        if capabilities:
+            if isinstance(capabilities, list):
+                params["capabilities"] = ",".join(capabilities)
+            else:
+                params["capabilities"] = capabilities
         resp = self._request("POST", "/agents/register", params=params)
         _raise_for_status(resp)
         return resp.json()
@@ -198,6 +221,47 @@ class AgentRelayClient:
     def discover(self, namespace: str) -> dict:
         """Discover all agents and relays in a namespace."""
         resp = self._request("GET", f"/agents/discover/{namespace}")
+        _raise_for_status(resp)
+        return resp.json()
+
+    def search_agents(
+        self,
+        capability: str | None = None,
+        namespace: str | None = None,
+        status: str | None = None,
+    ) -> dict:
+        """Search for agents by capability across all namespaces.
+
+        Args:
+            capability: Skill to search for (e.g. "code_review").
+            namespace: Optional namespace to limit the search.
+            status: Filter by status (default server-side is "ready").
+
+        Returns:
+            Dict with an "agents" list of matching agent profiles.
+        """
+        params: dict[str, str] = {}
+        if capability:
+            params["capability"] = capability
+        if namespace:
+            params["namespace"] = namespace
+        if status:
+            params["status"] = status
+        resp = self._request("GET", "/agents/search", params=params)
+        _raise_for_status(resp)
+        return resp.json()
+
+    def get_agent_profile(self, namespace: str, agent_name: str) -> dict:
+        """Get a specific agent's profile and capabilities.
+
+        Args:
+            namespace: The agent's namespace.
+            agent_name: The agent's name.
+
+        Returns:
+            Dict with agent profile including description, capabilities, and status.
+        """
+        resp = self._request("GET", f"/agents/{namespace}/{agent_name}")
         _raise_for_status(resp)
         return resp.json()
 

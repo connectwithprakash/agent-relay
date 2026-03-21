@@ -128,6 +128,29 @@ class TestRegisterAgent:
         assert resp1.json()["status"] == "waiting"
         assert resp2.json()["status"] == "waiting"
 
+    def test_register_with_capabilities(self, client):
+        """Registration should accept and store description and capabilities."""
+        resp = client.post(
+            "/agents/register",
+            params={
+                "namespace": "cap-ns",
+                "agent_name": "reviewer",
+                "description": "Reviews Python code for security issues",
+                "capabilities": "code_review,security,python",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "waiting"
+        assert data["agent_name"] == "reviewer"
+
+        # Verify via profile endpoint
+        profile_resp = client.get("/agents/cap-ns/reviewer")
+        assert profile_resp.status_code == 200
+        profile = profile_resp.json()
+        assert profile["description"] == "Reviews Python code for security issues"
+        assert profile["capabilities"] == ["code_review", "security", "python"]
+
 
 class TestDiscoverAgents:
     """Tests for GET /agents/discover/{namespace}"""
@@ -173,6 +196,39 @@ class TestDiscoverAgents:
         assert data["agents"][0]["status"] == "waiting"
         assert data["agents"][0]["last_heartbeat"] is not None
 
+    def test_discover_includes_capabilities(self, client):
+        """Discovery results should include description and capabilities."""
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "disc-caps",
+                "agent_name": "tester",
+                "device_id": "d1",
+                "description": "Runs integration tests",
+                "capabilities": "testing,integration",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "disc-caps",
+                "agent_name": "deployer",
+                "device_id": "d2",
+                "description": "Deploys to production",
+                "capabilities": "deployment,docker",
+            },
+        )
+
+        resp = client.get("/agents/discover/disc-caps")
+        assert resp.status_code == 200
+        data = resp.json()
+        agents_by_name = {a["agent_name"]: a for a in data["agents"]}
+
+        assert agents_by_name["tester"]["description"] == "Runs integration tests"
+        assert agents_by_name["tester"]["capabilities"] == ["testing", "integration"]
+        assert agents_by_name["deployer"]["description"] == "Deploys to production"
+        assert agents_by_name["deployer"]["capabilities"] == ["deployment", "docker"]
+
 
 class TestHeartbeat:
     """Tests for POST /agents/heartbeat"""
@@ -211,3 +267,191 @@ class TestHeartbeat:
             },
         )
         assert resp.status_code == 404
+
+
+class TestAgentProfile:
+    """Tests for GET /agents/{namespace}/{agent_name}"""
+
+    def test_get_agent_profile(self, client):
+        """Should return full agent profile with capabilities."""
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "prof-ns",
+                "agent_name": "coder",
+                "description": "Writes Python code",
+                "capabilities": "coding,python,refactoring",
+            },
+        )
+
+        resp = client.get("/agents/prof-ns/coder")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_name"] == "coder"
+        assert data["namespace"] == "prof-ns"
+        assert data["description"] == "Writes Python code"
+        assert data["capabilities"] == ["coding", "python", "refactoring"]
+        assert data["status"] == "waiting"
+        assert data["last_heartbeat"] is not None
+
+    def test_get_agent_profile_not_found(self, client):
+        """Requesting a non-existent agent profile should return 404."""
+        resp = client.get("/agents/no-ns/ghost")
+        assert resp.status_code == 404
+
+    def test_get_agent_profile_no_capabilities(self, client):
+        """Agent registered without capabilities should have null fields."""
+        client.post(
+            "/agents/register",
+            params={"namespace": "plain-ns", "agent_name": "basic"},
+        )
+
+        resp = client.get("/agents/plain-ns/basic")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["description"] is None
+        assert data["capabilities"] is None
+
+
+class TestSearchAgents:
+    """Tests for GET /agents/search"""
+
+    def test_search_by_capability(self, client):
+        """Should find agents that have the requested capability."""
+        # Register agents with different capabilities
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "search-ns",
+                "agent_name": "reviewer",
+                "device_id": "d1",
+                "description": "Code reviewer",
+                "capabilities": "code_review,python",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "search-ns",
+                "agent_name": "tester",
+                "device_id": "d2",
+                "description": "Test runner",
+                "capabilities": "testing,python",
+            },
+        )
+        # Both agents are now "ready" (relay created with 2 agents)
+
+        # Search for code_review capability
+        resp = client.get("/agents/search", params={"capability": "code_review"})
+        assert resp.status_code == 200
+        data = resp.json()
+        agent_names = [a["agent_name"] for a in data["agents"]]
+        assert "reviewer" in agent_names
+        assert "tester" not in agent_names
+
+    def test_search_by_capability_python(self, client):
+        """Should find all agents with a shared capability."""
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "search-ns2",
+                "agent_name": "reviewer",
+                "device_id": "d1",
+                "capabilities": "code_review,python",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "search-ns2",
+                "agent_name": "tester",
+                "device_id": "d2",
+                "capabilities": "testing,python",
+            },
+        )
+
+        resp = client.get("/agents/search", params={"capability": "python"})
+        assert resp.status_code == 200
+        data = resp.json()
+        agent_names = {a["agent_name"] for a in data["agents"]}
+        assert agent_names == {"reviewer", "tester"}
+
+    def test_search_with_namespace_filter(self, client):
+        """Should limit search to specified namespace."""
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "ns-a",
+                "agent_name": "alice",
+                "device_id": "d1",
+                "capabilities": "python",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "ns-a",
+                "agent_name": "bob",
+                "device_id": "d2",
+                "capabilities": "python",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "ns-b",
+                "agent_name": "charlie",
+                "device_id": "d3",
+                "capabilities": "python",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "ns-b",
+                "agent_name": "dave",
+                "device_id": "d4",
+                "capabilities": "python",
+            },
+        )
+
+        resp = client.get(
+            "/agents/search",
+            params={"capability": "python", "namespace": "ns-a"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        agent_names = {a["agent_name"] for a in data["agents"]}
+        assert agent_names == {"alice", "bob"}
+
+    def test_search_no_results(self, client):
+        """Search with no matching capability should return empty list."""
+        resp = client.get("/agents/search", params={"capability": "nonexistent"})
+        assert resp.status_code == 200
+        assert resp.json()["agents"] == []
+
+    def test_search_without_capability(self, client):
+        """Search without capability filter should return all ready agents."""
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "all-ns",
+                "agent_name": "a1",
+                "device_id": "d1",
+            },
+        )
+        client.post(
+            "/agents/register",
+            params={
+                "namespace": "all-ns",
+                "agent_name": "a2",
+                "device_id": "d2",
+            },
+        )
+
+        resp = client.get("/agents/search")
+        assert resp.status_code == 200
+        data = resp.json()
+        agent_names = {a["agent_name"] for a in data["agents"]}
+        assert "a1" in agent_names
+        assert "a2" in agent_names

@@ -261,8 +261,10 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
 
 
 @mcp.tool()
-def relay_register(namespace: str, agent_name: str) -> dict:
-    """Register this agent for cross-device discovery.
+def relay_register(
+    namespace: str, agent_name: str, description: str = "", capabilities: str = ""
+) -> dict:
+    """Register this agent for cross-device discovery with a description and capabilities.
 
     All agents using the same namespace will auto-discover each other.
     When 2+ agents register, a relay is automatically created.
@@ -271,11 +273,18 @@ def relay_register(namespace: str, agent_name: str) -> dict:
         namespace: Shared name (e.g. project name, team name).
             All agents with same namespace find each other.
         agent_name: Your agent's name.
+        description: What this agent does (e.g. "Reviews Python code for bugs").
+        capabilities: Comma-separated skills (e.g. "code_review,python,security").
     """
     try:
+        params = {"namespace": namespace, "agent_name": agent_name}
+        if description:
+            params["description"] = description
+        if capabilities:
+            params["capabilities"] = capabilities
         resp = _client.post(
             "/agents/register",
-            params={"namespace": namespace, "agent_name": agent_name},
+            params=params,
         )
         resp.raise_for_status()
         result = resp.json()
@@ -305,13 +314,34 @@ def relay_register(namespace: str, agent_name: str) -> dict:
 
 @mcp.tool()
 def relay_discover(namespace: str) -> dict:
-    """Discover all agents in a namespace. Shows who's online and if a relay exists.
+    """Discover all agents in a namespace. Shows who's online, their capabilities, and if a relay exists.
 
     Args:
         namespace: The namespace to search for agents in.
     """
     try:
         resp = _client.get(f"/agents/discover/{namespace}")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
+def relay_search_agents(capability: str = "", namespace: str = "") -> dict:
+    """Search for agents by capability. Find agents that can do what you need.
+
+    Args:
+        capability: Skill to search for (e.g. "code_review", "testing", "deployment").
+        namespace: Optional namespace to limit search.
+    """
+    try:
+        params = {}
+        if capability:
+            params["capability"] = capability
+        if namespace:
+            params["namespace"] = namespace
+        resp = _client.get("/agents/search", params=params)
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPStatusError as exc:
