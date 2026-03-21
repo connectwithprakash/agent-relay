@@ -13,6 +13,10 @@ mcp = FastMCP(
     "Create relays, send messages, read history, and check relay status.",
 )
 
+# Persistent HTTP client reused across all tool calls to avoid
+# creating and tearing down TCP connections on every request.
+_client = httpx.Client(base_url=RELAY_URL, timeout=10.0)
+
 
 def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     """Convert an HTTP error into a user-friendly error dict."""
@@ -48,13 +52,12 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
             relay_id can read messages. If False, only the creator can access it.
     """
     try:
-        with httpx.Client() as client:
-            resp = client.post(
-                f"{RELAY_URL}/relays",
-                json={"agent_names": agent_names, "is_public": is_public},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = _client.post(
+            "/relays",
+            json={"agent_names": agent_names, "is_public": is_public},
+        )
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
@@ -75,14 +78,13 @@ def relay_send(relay_id: str, content: str, agent: str, api_key: str = "") -> di
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
-        with httpx.Client() as client:
-            resp = client.post(
-                f"{RELAY_URL}/relays/{relay_id}/messages",
-                json={"content": content, "type": "text", "agent": agent},
-                headers=headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = _client.post(
+            f"/relays/{relay_id}/messages",
+            json={"content": content, "type": "text", "agent": agent},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
@@ -96,13 +98,12 @@ def relay_read(relay_id: str, limit: int = 20) -> dict:
         limit: Maximum number of messages to return (default: 20).
     """
     try:
-        with httpx.Client() as client:
-            resp = client.get(
-                f"{RELAY_URL}/relays/{relay_id}/history",
-                params={"limit": limit},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = _client.get(
+            f"/relays/{relay_id}/history",
+            params={"limit": limit},
+        )
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
@@ -115,10 +116,9 @@ def relay_status(relay_id: str) -> dict:
         relay_id: The relay ID to check.
     """
     try:
-        with httpx.Client() as client:
-            resp = client.get(f"{RELAY_URL}/relays/{relay_id}")
-            resp.raise_for_status()
-            return resp.json()
+        resp = _client.get(f"/relays/{relay_id}")
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
