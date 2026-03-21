@@ -247,11 +247,16 @@ async def register_agent(
 async def discover_agents(
     namespace: str,
     request: Request,
+    include_device_id: bool = False,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Discover all agents and relays in a namespace."""
+    """Discover all agents and relays in a namespace.
+
+    By default, device_id is omitted from responses for privacy.
+    Pass include_device_id=true (for admin use) to include it.
+    """
     base_query = db.query(AgentRegistration).filter(
         AgentRegistration.namespace == namespace,
     )
@@ -264,20 +269,23 @@ async def discover_agents(
         AgentRegistration.relay_id != None,  # noqa: E711
     ).first()
 
+    agents_list = []
+    for r in registrations:
+        agent_data = {
+            "agent_name": r.agent_name,
+            "description": r.description,
+            "capabilities": r.capabilities,
+            "relay_id": r.relay_id,
+            "status": r.status,
+            "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
+        }
+        if include_device_id:
+            agent_data["device_id"] = r.device_id
+        agents_list.append(agent_data)
+
     return {
         "namespace": namespace,
-        "agents": [
-            {
-                "agent_name": r.agent_name,
-                "device_id": r.device_id,
-                "description": r.description,
-                "capabilities": r.capabilities,
-                "relay_id": r.relay_id,
-                "status": r.status,
-                "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
-            }
-            for r in registrations
-        ],
+        "agents": agents_list,
         "relay_id": first_with_relay[0] if first_with_relay else None,
         "total": total,
         "limit": limit,

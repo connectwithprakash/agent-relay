@@ -4,8 +4,6 @@ Message endpoints - send and history
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -45,6 +43,27 @@ async def send_message(
         # Re-read relay inside lock to get fresh state
         db.refresh(relay)
 
+        # Idempotency check: if a message with this key already exists, return it
+        message_repo = MessageRepository(db)
+        if req.idempotency_key:
+            existing = db.query(Message).filter(
+                Message.idempotency_key == req.idempotency_key
+            ).first()
+            if existing:
+                agent_names = relay.agent_names or []
+                current_turn = (
+                    agent_names[relay.current_turn]
+                    if agent_names and 0 <= relay.current_turn < len(agent_names)
+                    else "unknown"
+                )
+                count = message_repo.count_by_relay_id(relay_id)
+                return SendMessageResponse(
+                    status="ok",
+                    message_id=existing.id,
+                    next_turn=current_turn,
+                    message_count=count,
+                )
+
         # Auto-advance if turn has timed out
         _check_and_advance_timeout(db, relay)
 
@@ -56,14 +75,14 @@ async def send_message(
             raise HTTPException(status_code=400, detail=str(e))
 
         # Create message
-        message_repo = MessageRepository(db)
         message = Message(
             relay_id=relay_id,
             agent_index=agent_index,
             agent_name=agent,
             content=req.content,
             data=req.data,
-            type=req.type
+            type=req.type,
+            idempotency_key=req.idempotency_key,
         )
         message = message_repo.create(message)
 

@@ -6,12 +6,12 @@ import random
 import secrets
 import string
 from datetime import datetime, timezone
-from typing import Optional, List, Tuple
+from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
-from ..models import Relay, Message
+from ..models import Relay
 from ..repositories import RelayRepository, MessageRepository
-from ..schemas import CreateRelayRequest, RelayState, MessageSchema
+from ..schemas import CreateRelayRequest, RelayState
 
 
 class RelayService:

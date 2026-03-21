@@ -4,10 +4,11 @@ Relay CRUD endpoints
 import logging
 from datetime import datetime, timezone
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..database import get_db
 from ..models import Relay
 from ..repositories import RelayRepository, MessageRepository
@@ -110,3 +111,30 @@ async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Dep
     _check_and_advance_timeout(db, relay)
 
     return RelayService.get_relay_state(db, relay)
+
+
+@router.get("/relays/{relay_id}/instructions")
+async def get_relay_instructions(
+    relay_id: str,
+    agent: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get relay purpose and agent-specific instructions."""
+    relay = get_relay_or_404(db, relay_id)
+    result = {
+        "relay_id": relay_id,
+        "description": relay.description,
+        "agent_names": relay.agent_names or [],
+        "current_turn": (
+            relay.agent_names[relay.current_turn]
+            if relay.agent_names and 0 <= relay.current_turn < len(relay.agent_names)
+            else None
+        ),
+    }
+    if relay.agent_instructions:
+        result["all_instructions"] = relay.agent_instructions
+        if agent:
+            result["your_instructions"] = relay.agent_instructions.get(
+                agent, "No specific instructions."
+            )
+    return result

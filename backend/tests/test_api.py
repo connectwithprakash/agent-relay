@@ -212,6 +212,56 @@ class TestListRelays:
         assert data["total_count"] == 3
 
 
+class TestRelayInstructions:
+    def test_get_instructions_no_instructions(self, client, sample_relay):
+        relay_id = sample_relay["relay_id"]
+        response = client.get(f"/relays/{relay_id}/instructions")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["relay_id"] == relay_id
+        assert data["agent_names"] == ["alice", "bob"]
+        assert data["current_turn"] == "alice"
+        assert "all_instructions" not in data
+
+    def test_get_instructions_with_instructions(self, client):
+        response = client.post("/relays", json={
+            "agent_names": ["alice", "bob"],
+            "is_public": True,
+            "agent_instructions": {
+                "alice": "You are a helpful coder.",
+                "bob": "You are a code reviewer.",
+            },
+        })
+        assert response.status_code == 200
+        relay_id = response.json()["relay_id"]
+
+        resp = client.get(f"/relays/{relay_id}/instructions?agent=alice")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["all_instructions"]["alice"] == "You are a helpful coder."
+        assert data["your_instructions"] == "You are a helpful coder."
+
+    def test_get_instructions_unknown_agent(self, client):
+        response = client.post("/relays", json={
+            "agent_names": ["alice", "bob"],
+            "is_public": True,
+            "agent_instructions": {
+                "alice": "You are a helpful coder.",
+            },
+        })
+        assert response.status_code == 200
+        relay_id = response.json()["relay_id"]
+
+        resp = client.get(f"/relays/{relay_id}/instructions?agent=charlie")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["your_instructions"] == "No specific instructions."
+
+    def test_get_instructions_not_found(self, client):
+        response = client.get("/relays/nonexistent/instructions")
+        assert response.status_code == 404
+
+
 class TestWebhooks:
     def test_register_webhook(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]

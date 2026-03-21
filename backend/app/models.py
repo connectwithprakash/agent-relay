@@ -52,6 +52,7 @@ class Message(Base):
     content = Column(Text, nullable=True)  # Plain text message
     data = Column(JSON, nullable=True)  # Structured data
     type = Column(String, default="text")  # 'text' or 'structured'
+    idempotency_key = Column(String(255), nullable=True)  # Prevents duplicate messages
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships

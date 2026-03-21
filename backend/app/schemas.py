@@ -3,7 +3,6 @@ Pydantic schemas for request/response validation
 """
 import json
 import re
-from datetime import datetime
 from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -25,6 +24,7 @@ class CreateRelayRequest(BaseModel):
     max_agents: int = Field(default=10, ge=2, le=20)
     min_agents: int = Field(default=2, ge=2, le=20)
     max_skip_count: int = Field(default=3, ge=1, le=20)
+    idempotency_key: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator('agent_names')
     @classmethod
@@ -82,6 +82,7 @@ class SendMessageRequest(BaseModel):
     type: Literal["text", "structured"] = "text"
     agent: Optional[str] = None  # Auto-detected if None
     next_agent: Optional[str] = None  # Direct turn to specific agent (skip round-robin)
+    idempotency_key: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator("data")
     @classmethod

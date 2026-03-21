@@ -3,7 +3,7 @@ Webhook service - Webhook delivery and management
 """
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Optional
 import httpx
 
 from sqlalchemy.orm import Session

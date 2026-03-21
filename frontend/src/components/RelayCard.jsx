@@ -4,6 +4,11 @@ import AgentAvatar from './AgentAvatar';
 export default function RelayCard({ relay }) {
   const navigate = useNavigate();
 
+  // Loading skeleton for missing or partial relay data
+  if (!relay || !relay.relay_id) {
+    return <div className="animate-pulse bg-slate-200 dark:bg-slate-800 rounded-2xl h-32" />;
+  }
+
   const formatDate = (timestamp) => {
     if (!timestamp) return 'Unknown';
     return new Date(timestamp).toLocaleDateString('en-US', {
