@@ -149,12 +149,43 @@ class RelayService:
             )
     
     @staticmethod
-    def advance_turn(db: Session, relay: Relay) -> str:
-        """Advance to next agent's turn and return next agent name"""
+    def advance_turn(db: Session, relay: Relay, next_agent: str = None) -> str:
+        """Advance turn with optional directed turn and starvation prevention.
+
+        If next_agent specified and valid, they go next (unless an agent is starving).
+        Otherwise falls back to round-robin.
+        """
         agent_names = relay.agent_names or []
-        if not agent_names or relay.agent_count == 0:
+        if not agent_names:
             raise ValueError("Cannot advance turn: relay has no agents")
-        relay.current_turn = (relay.current_turn + 1) % relay.agent_count
+
+        # Update agent_count to match actual list (handles late joins)
+        relay.agent_count = len(agent_names)
+
+        # Starvation prevention: track wait counts
+        turns_waited = dict(relay.turns_waited or {})
+        current_agent = agent_names[relay.current_turn] if relay.current_turn < len(agent_names) else None
+
+        if current_agent:
+            turns_waited[current_agent] = 0
+            for agent in agent_names:
+                if agent != current_agent:
+                    turns_waited[agent] = turns_waited.get(agent, 0) + 1
+
+        # Check for starving agents
+        max_skip = relay.max_skip_count or 3
+        starving = [(a, cnt) for a, cnt in turns_waited.items()
+                    if cnt >= max_skip and a != current_agent and a in agent_names]
+
+        if starving:
+            starving.sort(key=lambda x: -x[1])
+            relay.current_turn = agent_names.index(starving[0][0])
+        elif next_agent and next_agent in agent_names:
+            relay.current_turn = agent_names.index(next_agent)
+        else:
+            relay.current_turn = (relay.current_turn + 1) % len(agent_names)
+
+        relay.turns_waited = turns_waited
         relay.turn_started_at = datetime.now(timezone.utc)
         db.commit()
         return agent_names[relay.current_turn]

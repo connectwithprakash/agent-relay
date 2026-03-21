@@ -67,6 +67,7 @@ class SendMessageRequest(BaseModel):
     data: Optional[dict] = None
     type: Literal["text", "structured"] = "text"
     agent: Optional[str] = None  # Auto-detected if None
+    next_agent: Optional[str] = None  # Direct turn to specific agent (skip round-robin)
 
     @field_validator("data")
     @classmethod

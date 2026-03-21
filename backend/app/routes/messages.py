@@ -68,7 +68,7 @@ async def send_message(
         message = message_repo.create(message)
 
         # Switch turn
-        next_turn = RelayService.advance_turn(db, relay)
+        next_turn = RelayService.advance_turn(db, relay, getattr(req, 'next_agent', None))
         message_count = message_repo.count_by_relay_id(relay_id)
 
     # Prepare broadcast payload (outside lock)
