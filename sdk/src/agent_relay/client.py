@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import httpx
 
 from .exceptions import (
@@ -87,7 +89,15 @@ class AgentRelayClient:
         agent: str,
         api_key: str | None = None,
     ) -> SendResult:
-        """Send a message in a relay (only works when it's the agent's turn)."""
+        """Send a message in a relay (only works when it's the agent's turn).
+
+        Args:
+            relay_id: The relay ID to send to.
+            content: The message text to send.
+            agent: The name of the agent sending the message.
+            api_key: Per-call API key override. If provided, this is used instead
+                of the client-level ``api_key`` for this request only.
+        """
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -110,6 +120,40 @@ class AgentRelayClient:
         _raise_for_status(resp)
         history = MessageHistory(**resp.json())
         return history.messages
+
+    # -- Polling helpers --
+
+    def wait_for_turn(
+        self,
+        relay_id: str,
+        agent: str,
+        poll_interval: float = 2.0,
+        timeout: float = 300.0,
+    ) -> RelayState:
+        """Block until it is the specified agent's turn.
+
+        Polls ``get_relay`` at the given interval and returns the relay state
+        once ``current_turn`` matches *agent*.
+
+        Args:
+            relay_id: The relay to watch.
+            agent: The agent name to wait for.
+            poll_interval: Seconds between status checks (default 2).
+            timeout: Maximum seconds to wait before raising ``TimeoutError`` (default 300).
+
+        Returns:
+            The :class:`RelayState` when it becomes the agent's turn.
+
+        Raises:
+            TimeoutError: If the agent's turn does not arrive within *timeout* seconds.
+        """
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            state = self.get_relay(relay_id)
+            if state.current_turn == agent:
+                return state
+            time.sleep(poll_interval)
+        raise TimeoutError(f"Timed out waiting for {agent}'s turn after {timeout}s")
 
     # -- Utility --
 

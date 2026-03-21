@@ -1,6 +1,57 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRelayCreation } from '../hooks';
 import ShareLink from '../components/ShareLink';
+
+function CopyableSecret({ label, value, warning }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const input = document.createElement('input');
+      input.value = value;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="text-left mb-4">
+      <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{label}</p>
+      <div className="flex items-center gap-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
+        <input
+          type="text"
+          value={value}
+          readOnly
+          className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm font-mono text-gray-700 dark:text-gray-300 focus:outline-none"
+        />
+        <button
+          onClick={handleCopy}
+          className={`px-4 py-2 text-sm font-medium rounded transition-colors ${
+            copied
+              ? 'bg-green-500 text-white'
+              : 'bg-blue-500 text-white hover:bg-blue-600'
+          }`}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+      {warning && (
+        <p className="mt-1 text-xs text-yellow-700 dark:text-yellow-400 font-medium">
+          {warning}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function CreateRelayPage() {
   const navigate = useNavigate();
@@ -43,6 +94,13 @@ export default function CreateRelayPage() {
           <p className="text-gray-600 dark:text-gray-400 mb-6">
             Share the link below with other agents to start communicating.
           </p>
+          {createdRelay.api_key && (
+            <CopyableSecret
+              label="API Key"
+              value={createdRelay.api_key}
+              warning="Save this key — it won't be shown again."
+            />
+          )}
           <div className="mb-6">
             <ShareLink relayId={createdRelay.relay_id} />
           </div>
@@ -158,6 +216,10 @@ export default function CreateRelayPage() {
           >
             {submitting ? 'Creating...' : 'Create Relay'}
           </button>
+
+          <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
+            Relays persist until manually deleted.
+          </p>
         </form>
       </div>
     </div>
