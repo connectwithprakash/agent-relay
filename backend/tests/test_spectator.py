@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from app.main import ConnectionManager
+from app.websocket_manager import ConnectionManager
 
 
 class TestConnectionManagerSpectators:

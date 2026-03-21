@@ -70,7 +70,7 @@ def client(db_session, monkeypatch):
         def __getattr__(self, name):
             return getattr(self._real, name)
 
-    monkeypatch.setattr("app.main.SessionLocal", lambda: _NoCloseSession(db_session))
+    monkeypatch.setattr("app.routes.websocket.SessionLocal", lambda: _NoCloseSession(db_session))
 
     # Disable rate limiting for tests
     app.state.limiter.enabled = False

@@ -215,7 +215,7 @@ class TestWebSocketAuth:
     def test_ws_auth_code_present(self):
         """Verify that the websocket_endpoint accepts an api_key query param."""
         import inspect
-        from app.main import websocket_endpoint
+        from app.routes.websocket import websocket_endpoint
         sig = inspect.signature(websocket_endpoint)
         assert "api_key" in sig.parameters, "websocket_endpoint must accept api_key param"
 

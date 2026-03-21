@@ -123,6 +123,34 @@ def relay_status(relay_id: str) -> dict:
         return _handle_http_error(exc)
 
 
+@mcp.tool()
+def relay_watch(relay_id: str, duration: int = 30) -> dict:
+    """Watch a relay for new messages using Server-Sent Events.
+    Returns messages received during the watch period.
+
+    Args:
+        relay_id: The relay ID to watch.
+        duration: How many seconds to watch (default 30, max 120).
+    """
+    import json
+    import time
+
+    duration = min(duration, 120)
+    messages = []
+    try:
+        with _client.stream("GET", f"/relays/{relay_id}/watch") as response:
+            response.raise_for_status()
+            deadline = time.monotonic() + duration
+            for line in response.iter_lines():
+                if time.monotonic() > deadline:
+                    break
+                if line.startswith("data:") and line.strip() != "data:":
+                    messages.append(json.loads(line[5:].strip()))
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+    return {"messages": messages, "count": len(messages)}
+
+
 def main():
     """Entry point for the MCP server."""
     mcp.run()
