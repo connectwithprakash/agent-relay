@@ -68,12 +68,35 @@ class WebhookService:
             try:
                 response = await client.post(webhook.url, json=payload)
 
-                if response.status_code == 200:
+                if 200 <= response.status_code < 300:
                     await WebhookService._log_delivery(
                         webhook.id, message.id, "success", attempt
                     )
                     logger.info("Webhook %d delivered (attempt %d)", webhook.id, attempt)
                     return
+
+                if 400 <= response.status_code < 500:
+                    # Client error - don't retry, log as failed immediately
+                    error_msg = f"HTTP {response.status_code}: client error"
+                    logger.warning(
+                        "Webhook %d failed with client error %d, not retrying",
+                        webhook.id, response.status_code,
+                    )
+                    await WebhookService._log_delivery(
+                        webhook.id, message.id, "failed", attempt, error_msg
+                    )
+                    return
+
+                # 5xx server error - retry with backoff
+                error_msg = f"HTTP {response.status_code}: server error"
+                logger.warning("Webhook %d attempt %d got %d", webhook.id, attempt, response.status_code)
+
+                if attempt >= settings.webhook_max_retries:
+                    await WebhookService._log_delivery(
+                        webhook.id, message.id, "failed", attempt, error_msg
+                    )
+                else:
+                    await asyncio.sleep(2 ** (attempt - 1))
 
             except Exception as e:
                 error_msg = str(e)

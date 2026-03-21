@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useToast } from './Toast';
 
 const MAX_CHARS = 4000;
 
 export default function MessageInput({ onSendMessage, currentTurn, agentName, disabled }) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
+  const toast = useToast();
 
   const isMyTurn = currentTurn === agentName;
   const canSend = isMyTurn && message.trim().length > 0 && !disabled && !sending;
@@ -20,7 +22,7 @@ export default function MessageInput({ onSendMessage, currentTurn, agentName, di
       setMessage('');
     } catch (error) {
       console.error('Failed to send message:', error);
-      alert('Failed to send message: ' + error.message);
+      toast('Failed to send message: ' + error.message, 'error');
     } finally {
       setSending(false);
     }

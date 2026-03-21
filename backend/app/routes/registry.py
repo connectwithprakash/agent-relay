@@ -75,7 +75,9 @@ async def search_agents(
 
 
 @router.post("/agents/register")
+@limiter.limit("10/minute")
 async def register_agent(
+    request: Request,
     namespace: str,
     agent_name: str,
     device_id: str = None,
@@ -88,6 +90,13 @@ async def register_agent(
     When two or more agents register with the same namespace, a relay is
     automatically created and all waiting agents are joined to it.
     """
+    # Validate agent_name length
+    if not agent_name or len(agent_name) > 100:
+        raise HTTPException(
+            status_code=422,
+            detail="agent_name must be between 1 and 100 characters",
+        )
+
     if not device_id:
         device_id = secrets.token_urlsafe(8)
 
@@ -322,6 +331,13 @@ async def join_by_code(
 
     The join code acts as authorization -- knowing the code grants access.
     """
+    # Validate agent_name length
+    if not agent_name or len(agent_name) > 100:
+        raise HTTPException(
+            status_code=422,
+            detail="agent_name must be between 1 and 100 characters",
+        )
+
     relay = db.query(Relay).filter(Relay.join_code == join_code.upper()).first()
     if not relay:
         raise HTTPException(status_code=404, detail="Invalid join code")

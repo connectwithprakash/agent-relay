@@ -19,7 +19,7 @@ class CreateRelayRequest(BaseModel):
     agent_names: Optional[list[str]] = Field(default=None, max_length=20)
     is_public: bool = False
     owner_id: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(default=None, max_length=1000)
     agent_instructions: Optional[dict] = None
     turn_timeout: Optional[int] = Field(default=None, ge=1, description="Seconds per turn before auto-advance. None = no timeout.")
     max_agents: int = Field(default=10, ge=2, le=20)
