@@ -9,7 +9,7 @@ RELAY_URL = os.environ.get("RELAY_URL", "http://localhost:8000")
 
 mcp = FastMCP(
     "Agent Relay",
-    description="Turn-based agent-to-agent communication. "
+    instructions="Turn-based agent-to-agent communication. "
     "Create relays, send messages, read history, and check relay status.",
 )
 
