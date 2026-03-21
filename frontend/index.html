@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>Agent Relay</title>
+    <script>
+      // Apply dark mode BEFORE React renders to prevent flash
+      (function() {
+        var theme = localStorage.getItem('theme');
+        if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <style>
+      /* Prevent flash of unstyled content */
+      html { background: #f8fafc; }
+      html.dark { background: #0f172a; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
