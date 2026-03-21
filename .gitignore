@@ -38,5 +38,6 @@ build/
 # Environment variables
 .env
 .env.local
+.agent-relay.json
 .claude/worktrees/
 tmp/

@@ -3,6 +3,7 @@
 from .client import AgentRelayClient
 from .async_client import AsyncAgentRelayClient
 from .models import RelayInfo, RelayState, MessageInfo, SendResult
+from .config import find_config, load_config, save_config, load_from_env
 from .exceptions import (
     AgentRelayError,
     NotYourTurnError,
@@ -23,6 +24,10 @@ __all__ = [
     "RelayNotFoundError",
     "AuthenticationError",
     "RateLimitError",
+    "find_config",
+    "load_config",
+    "save_config",
+    "load_from_env",
 ]
 
 __version__ = "0.1.0"
