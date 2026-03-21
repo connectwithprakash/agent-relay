@@ -119,14 +119,14 @@ def send(message, name):
 @click.argument("namespace")
 @click.argument("agent_name")
 @click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
+@click.option("--description", "-d", default="", help="What this agent does")
+@click.option("--capabilities", "-c", default="", help="Comma-separated capabilities")
 @click.option("--wait/--no-wait", default=True, help="Wait for other agents to join")
 @click.option("--timeout", default=300, help="Seconds to wait for relay creation")
-def register(namespace, agent_name, server, wait, timeout):
-    """Register in a namespace for cross-device discovery.
+def register(namespace, agent_name, server, description, capabilities, wait, timeout):
+    """Register agent with capabilities for discovery.
 
-    Example: agent-relay register my-project alice --server http://myserver:8000
-    On another device: agent-relay register my-project bob --server http://myserver:8000
-    Both agents auto-discover each other and join the same relay!
+    Example: agent-relay register my-project alice -d "Code reviewer" -c "code_review,python"
     """
     client = AgentRelayClient(server)
     click.echo(f"Registering '{agent_name}' in namespace '{namespace}'...")
@@ -140,7 +140,12 @@ def register(namespace, agent_name, server, wait, timeout):
                 click.echo("Timed out waiting for other agents.", err=True)
                 raise SystemExit(1)
         else:
-            result = client.register(namespace, agent_name)
+            result = client.register(
+                namespace,
+                agent_name,
+                description=description or None,
+                capabilities=capabilities or None,
+            )
 
         if result["status"] == "waiting":
             click.echo(f"Registered. Waiting for more agents in '{namespace}'.")
@@ -170,9 +175,39 @@ def discover(namespace, server):
         click.echo(f"Relay: {result.get('relay_id', 'none yet')}")
         for agent in result.get("agents", []):
             status_icon = "+" if agent["status"] == "ready" else "o"
+            caps = agent.get("capabilities") or []
+            caps_str = f" [{', '.join(caps)}]" if caps else ""
+            desc_str = f" - {agent['description']}" if agent.get("description") else ""
             click.echo(
                 f"  {status_icon} {agent['agent_name']}"
                 f" ({agent['status']}) on {agent['device_id']}"
+                f"{desc_str}{caps_str}"
+            )
+    finally:
+        client.close()
+
+
+@main.command("search")
+@click.option("--capability", "-c", default=None, help="Capability to search for")
+@click.option("--namespace", "-n", default=None, help="Limit to namespace")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
+def search_agents(capability, namespace, server):
+    """Search for agents by capability."""
+    client = AgentRelayClient(server)
+    try:
+        result = client.search_agents(capability=capability, namespace=namespace)
+        agents = result.get("agents", [])
+        if not agents:
+            click.echo("No agents found.")
+            return
+        click.echo(f"Found {len(agents)} agent(s):")
+        for agent in agents:
+            caps = agent.get("capabilities") or []
+            caps_str = f" [{', '.join(caps)}]" if caps else ""
+            desc_str = f" - {agent['description']}" if agent.get("description") else ""
+            click.echo(
+                f"  {agent['agent_name']}@{agent['namespace']}"
+                f" ({agent['status']}){desc_str}{caps_str}"
             )
     finally:
         client.close()

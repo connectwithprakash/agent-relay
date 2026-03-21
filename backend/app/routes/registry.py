@@ -6,8 +6,9 @@ import random
 import secrets
 import string
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -16,11 +17,58 @@ from ..models import AgentRegistration, Relay
 router = APIRouter()
 
 
+def _parse_capabilities(capabilities: Optional[str]) -> Optional[list]:
+    """Parse a comma-separated capabilities string into a list."""
+    if not capabilities:
+        return None
+    return [c.strip() for c in capabilities.split(",") if c.strip()]
+
+
+def _agent_to_dict(r: AgentRegistration) -> dict:
+    """Serialize an AgentRegistration to a dict with profile fields."""
+    return {
+        "agent_name": r.agent_name,
+        "namespace": r.namespace,
+        "description": r.description,
+        "capabilities": r.capabilities,
+        "status": r.status,
+        "relay_id": r.relay_id,
+        "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
+    }
+
+
+@router.get("/agents/search")
+async def search_agents(
+    capability: Optional[str] = None,
+    namespace: Optional[str] = None,
+    status: str = "ready",
+    db: Session = Depends(get_db),
+):
+    """Search for agents by capability across all namespaces."""
+    query = db.query(AgentRegistration)
+    if namespace:
+        query = query.filter(AgentRegistration.namespace == namespace)
+    if status:
+        query = query.filter(AgentRegistration.status == status)
+
+    results = query.all()
+
+    # Filter by capability (JSON array contains)
+    if capability:
+        results = [r for r in results if r.capabilities and capability in r.capabilities]
+
+    return {
+        "agents": [_agent_to_dict(r) for r in results],
+    }
+
+
 @router.post("/agents/register")
 async def register_agent(
     namespace: str,
     agent_name: str,
     device_id: str = None,
+    description: str = None,
+    capabilities: str = None,
     db: Session = Depends(get_db),
 ):
     """Register an agent in a namespace for cross-device discovery.
@@ -31,6 +79,8 @@ async def register_agent(
     if not device_id:
         device_id = secrets.token_urlsafe(8)
 
+    caps_list = _parse_capabilities(capabilities)
+
     # Check if this agent+device is already registered in this namespace
     existing_reg = db.query(AgentRegistration).filter(
         AgentRegistration.namespace == namespace,
@@ -39,10 +89,14 @@ async def register_agent(
     ).first()
 
     if existing_reg and existing_reg.relay_id:
-        # Already registered and has a relay
+        # Already registered and has a relay - update profile fields
         relay = db.query(Relay).filter(Relay.id == existing_reg.relay_id).first()
         existing_reg.last_heartbeat = datetime.now(timezone.utc)
         existing_reg.status = "ready"
+        if description is not None:
+            existing_reg.description = description
+        if caps_list is not None:
+            existing_reg.capabilities = caps_list
         db.commit()
         return {
             "status": "joined",
@@ -75,6 +129,8 @@ async def register_agent(
             namespace=namespace,
             agent_name=agent_name,
             device_id=device_id,
+            description=description,
+            capabilities=caps_list,
             relay_id=relay.id,
             status="ready",
         )
@@ -95,12 +151,18 @@ async def register_agent(
             # Re-use existing registration
             existing_reg.last_heartbeat = datetime.now(timezone.utc)
             existing_reg.status = "waiting"
+            if description is not None:
+                existing_reg.description = description
+            if caps_list is not None:
+                existing_reg.capabilities = caps_list
             db.commit()
         else:
             reg = AgentRegistration(
                 namespace=namespace,
                 agent_name=agent_name,
                 device_id=device_id,
+                description=description,
+                capabilities=caps_list,
                 status="waiting",
             )
             db.add(reg)
@@ -172,6 +234,8 @@ async def discover_agents(namespace: str, db: Session = Depends(get_db)):
             {
                 "agent_name": r.agent_name,
                 "device_id": r.device_id,
+                "description": r.description,
+                "capabilities": r.capabilities,
                 "relay_id": r.relay_id,
                 "status": r.status,
                 "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
@@ -184,6 +248,22 @@ async def discover_agents(namespace: str, db: Session = Depends(get_db)):
             else None
         ),
     }
+
+
+@router.get("/agents/{namespace}/{agent_name}")
+async def get_agent_profile(
+    namespace: str,
+    agent_name: str,
+    db: Session = Depends(get_db),
+):
+    """Get a specific agent's profile and capabilities."""
+    reg = db.query(AgentRegistration).filter(
+        AgentRegistration.namespace == namespace,
+        AgentRegistration.agent_name == agent_name,
+    ).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _agent_to_dict(reg)
 
 
 @router.get("/relays/code/{join_code}")

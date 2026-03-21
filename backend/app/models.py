@@ -104,6 +104,9 @@ class AgentRegistration(Base):
     namespace = Column(String, nullable=False, index=True)
     agent_name = Column(String, nullable=False)
     device_id = Column(String, nullable=False)
+    description = Column(String, nullable=True)  # What this agent does
+    capabilities = Column(JSON, nullable=True)  # ["code_review", "security", "python"]
+    metadata_ = Column("metadata", JSON, nullable=True)  # Arbitrary key-value pairs
     relay_id = Column(String, ForeignKey("relays.id"), nullable=True)
     status = Column(String, default="waiting")  # waiting, ready, offline
     last_heartbeat = Column(DateTime, default=lambda: datetime.now(timezone.utc))
