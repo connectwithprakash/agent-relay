@@ -2,10 +2,13 @@
 WebSocket connection manager, SSE spectator support, and per-relay locks
 """
 import asyncio
+import logging
 import threading
 from typing import Dict, List
 
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -71,7 +74,10 @@ class ConnectionManager:
                 try:
                     queue.put_nowait(message)
                 except asyncio.QueueFull:
-                    pass  # Drop message for slow spectators
+                    logger.warning(
+                        "Dropped message for slow spectator on relay %s (queue full)",
+                        relay_id,
+                    )
 
 
 # Singleton instance
