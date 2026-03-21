@@ -23,7 +23,7 @@ def load_config(path: Optional[str] = None, relay_name: str = "default") -> dict
 
     Returns dict with server, relay_id, api_key, agent.
     """
-    config_path = find_config(path) if path is None else Path(path)
+    config_path = find_config(path)
     if config_path is None or not config_path.exists():
         raise FileNotFoundError(f"No {CONFIG_FILENAME} found")
 

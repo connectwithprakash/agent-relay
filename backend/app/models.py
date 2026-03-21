@@ -13,7 +13,7 @@ class Relay(Base):
     __tablename__ = "relays"
 
     id = Column(String, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     current_turn = Column(Integer, default=0)  # Index of agent whose turn it is
     agent_count = Column(Integer, default=2)
     agent_names = Column(JSON)  # List of agent names
@@ -45,7 +45,7 @@ class Message(Base):
     content = Column(Text, nullable=True)  # Plain text message
     data = Column(JSON, nullable=True)  # Structured data
     type = Column(String, default="text")  # 'text' or 'structured'
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     relay = relationship("Relay", back_populates="messages")
@@ -66,7 +66,7 @@ class Webhook(Base):
     agent_index = Column(Integer, nullable=False)  # Which agent this webhook belongs to
     agent_name = Column(String, nullable=False)
     url = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     relay = relationship("Relay", back_populates="webhooks")
@@ -86,7 +86,7 @@ class WebhookDelivery(Base):
     status = Column(String, nullable=False)  # 'success' or 'failed'
     attempts = Column(Integer, default=1)
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     webhook = relationship("Webhook", back_populates="deliveries")
