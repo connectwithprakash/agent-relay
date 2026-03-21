@@ -18,9 +18,12 @@ export default function RelayCard({ relay }) {
   const messageCount = relay.message_count ?? 0;
 
   return (
-    <button
+    <div
       onClick={() => navigate(`/relay/${relay.relay_id}`)}
-      className="w-full text-left p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:border-indigo-300 dark:hover:border-indigo-700 hover:shadow-lg transition-all duration-200 group"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/relay/${relay.relay_id}`); }}
+      className="w-full text-left p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:border-indigo-300 dark:hover:border-indigo-700 hover:shadow-lg transition-all duration-200 group cursor-pointer"
     >
       {/* Header row */}
       <div className="flex items-start justify-between mb-3">
@@ -73,13 +76,27 @@ export default function RelayCard({ relay }) {
           </svg>
           {agents.length} agent{agents.length !== 1 ? 's' : ''}
         </span>
-        <span className="ml-auto text-indigo-500 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 font-medium">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/relay/${relay.relay_id}?mode=watch`);
+          }}
+          className="ml-auto text-amber-600 dark:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-xs font-medium hover:underline"
+          aria-label="Watch relay"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          Watch
+        </button>
+        <span className="text-indigo-500 dark:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 font-medium">
           Open
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </span>
       </div>
-    </button>
+    </div>
   );
 }

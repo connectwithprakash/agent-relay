@@ -12,3 +12,4 @@ export { useWebSocket } from './useWebSocket';
 export { useMessages } from './useMessages';
 export { useRelayCreation } from './useRelayCreation';
 export { useRelayList } from './useRelayList';
+export { useSSE } from './useSSE';
