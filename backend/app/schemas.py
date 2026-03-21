@@ -1,9 +1,13 @@
 """
 Pydantic schemas for request/response validation
 """
+import json
 from datetime import datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Maximum serialized size for structured data payloads (64 KB)
+MAX_DATA_SIZE_BYTES = 65536
 
 
 # Relay Schemas
@@ -34,10 +38,21 @@ class RelayState(BaseModel):
 
 # Message Schemas
 class SendMessageRequest(BaseModel):
-    content: Optional[str] = None
+    content: Optional[str] = Field(default=None, max_length=65536)
     data: Optional[dict] = None
     type: Literal["text", "structured"] = "text"
     agent: Optional[str] = None  # Auto-detected if None
+
+    @field_validator("data")
+    @classmethod
+    def validate_data_size(cls, v: Optional[dict]) -> Optional[dict]:
+        if v is not None:
+            serialized = json.dumps(v)
+            if len(serialized.encode("utf-8")) > MAX_DATA_SIZE_BYTES:
+                raise ValueError(
+                    f"Serialized data exceeds maximum size of {MAX_DATA_SIZE_BYTES} bytes"
+                )
+        return v
 
 
 class SendMessageResponse(BaseModel):

@@ -5,9 +5,10 @@ Clean architecture with services and repositories
 import asyncio
 import hashlib
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from .schemas import (
 )
 from .services import PrivacyService, RelayService, WebhookService
 from .repositories import RelayRepository, MessageRepository, WebhookRepository
+from .utils.url_validator import validate_webhook_url
 
 logger = logging.getLogger("agent_relay.app")
 
@@ -58,11 +60,13 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS middleware
+# CORS middleware - disable credentials when using wildcard origins
+allow_credentials = "*" not in settings.cors_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -285,6 +289,9 @@ async def get_message_history(
     if not PrivacyService.check_access(relay, owner_id):
         raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
 
+    # Cap limit to prevent excessive queries
+    limit = min(limit, 100)
+
     message_repo = MessageRepository(db)
     messages = message_repo.get_by_relay_id(relay_id, limit, offset)
     total_count = message_repo.count_by_relay_id(relay_id)
@@ -313,6 +320,14 @@ async def register_webhook(
     db: Session = Depends(get_db),
 ):
     """Register a webhook for receiving real-time updates. Requires API key for authenticated relays."""
+
+    # Validate webhook URL to prevent SSRF
+    if not validate_webhook_url(req.url):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid webhook URL. Must be http/https and not target private networks."
+        )
+
     try:
         _, agent_index = RelayService.validate_agent(relay, req.agent)
     except ValueError as e:
@@ -352,7 +367,12 @@ async def list_webhooks(relay_id: str, db: Session = Depends(get_db)):
     ]
 
 @app.websocket("/relays/{relay_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, relay_id: str, agent: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    relay_id: str,
+    agent: str,
+    api_key: Optional[str] = Query(default=None),
+):
     """WebSocket endpoint for real-time message updates"""
     db = SessionLocal()
     try:
@@ -365,6 +385,16 @@ async def websocket_endpoint(websocket: WebSocket, relay_id: str, agent: str):
         if agent not in relay.agent_names:
             await websocket.close(code=4003, reason="Unknown agent")
             return
+
+        # Authenticate WebSocket connection if relay has an API key
+        if hasattr(relay, "api_key_hash") and relay.api_key_hash is not None:
+            if not api_key:
+                await websocket.close(code=4001, reason="Authentication required")
+                return
+            provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            if provided_hash != relay.api_key_hash:
+                await websocket.close(code=4001, reason="Invalid API key")
+                return
 
         await manager.connect(relay_id, agent, websocket)
 

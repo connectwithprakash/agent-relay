@@ -2,10 +2,10 @@
 Test fixtures and configuration for Agent Relay tests
 """
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
 from app.models import Base
 from app.main import app, get_db
@@ -13,35 +13,42 @@ from app.main import app, get_db
 
 # In-memory SQLite for testing - use StaticPool to share the same connection
 # across threads (required for SQLite in-memory databases)
-engine = create_engine(
-    "sqlite://",
+_engine = create_engine(
+    "sqlite:///:memory:",
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=_engine)
+_TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
 
-@pytest.fixture(autouse=True)
-def setup_database():
-    """Create tables before each test, drop after."""
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture()
+def db_session():
+    """Provide a transactional database session that rolls back after each test."""
+    connection = _engine.connect()
+    transaction = connection.begin()
+    session = _TestingSessionLocal(bind=connection)
+
+    # Nested transaction so that the session.commit() inside app code
+    # doesn't actually commit the outer transaction.
+    nested = connection.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def restart_savepoint(sess, trans):
+        nonlocal nested
+        if trans.nested and not trans._parent.nested:
+            nested = connection.begin_nested()
+
+    yield session
+
+    session.close()
+    transaction.rollback()
+    connection.close()
 
 
-@pytest.fixture
-def db_session(setup_database):
-    """Provide a transactional database session for tests."""
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-@pytest.fixture
+@pytest.fixture()
 def client(db_session):
-    """FastAPI test client with overridden database dependency."""
+    """Create a test client that uses the transactional db session."""
     def override_get_db():
         try:
             yield db_session
@@ -99,3 +106,11 @@ def sample_message(client, sample_relay):
         "relay": sample_relay,
         "message": response.json(),
     }
+
+
+@pytest.fixture()
+def relay_id(client):
+    """Create a relay and return its ID."""
+    resp = client.post("/relays", json={"agent_names": ["alice", "bob"]})
+    assert resp.status_code == 200
+    return resp.json()["relay_id"]
