@@ -1,5 +1,6 @@
 """MCP server exposing Agent Relay tools for Claude Code, Cursor, and other MCP clients."""
 
+import json
 import os
 
 import httpx
@@ -16,6 +17,31 @@ mcp = FastMCP(
 # Persistent HTTP client reused across all tool calls to avoid
 # creating and tearing down TCP connections on every request.
 _client = httpx.Client(base_url=RELAY_URL, timeout=10.0)
+
+# Ephemeral session state populated on relay_create.
+# Allows subsequent tool calls to omit relay_id, api_key, and agent.
+_session: dict = {}
+
+
+def _save_config_file(server: str, relay_id: str, api_key: str, agent: str) -> None:
+    """Write .agent-relay.json to the current working directory."""
+    config_path = os.path.join(os.getcwd(), ".agent-relay.json")
+
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            data = json.load(f)
+    else:
+        data = {"version": 1, "server": server, "relays": {}}
+
+    data["server"] = server
+    data["relays"]["default"] = {
+        "relay_id": relay_id,
+        "api_key": api_key,
+        "my_agent": agent,
+    }
+
+    with open(config_path, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
@@ -57,23 +83,56 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
             json={"agent_names": agent_names, "is_public": is_public},
         )
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+
+        # Auto-populate session state so subsequent calls can omit args.
+        _session["relay_id"] = result.get("relay_id")
+        _session["api_key"] = result.get("api_key")
+        _session["agent"] = agent_names[0] if agent_names else None
+
+        # Persist to .agent-relay.json for cross-session discovery.
+        try:
+            _save_config_file(
+                server=RELAY_URL,
+                relay_id=_session["relay_id"],
+                api_key=_session.get("api_key", ""),
+                agent=_session.get("agent", ""),
+            )
+            result["config_saved"] = True
+        except OSError:
+            result["config_saved"] = False
+
+        return result
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
 
 @mcp.tool()
-def relay_send(relay_id: str, content: str, agent: str, api_key: str = "") -> dict:
+def relay_send(
+    relay_id: str = "", content: str = "", agent: str = "", api_key: str = ""
+) -> dict:
     """Send a message in a relay. Only works when it's the agent's turn.
 
     Use relay_status to check whose turn it is first.
+    All arguments default to session values from the last relay_create call.
 
     Args:
-        relay_id: The relay ID to send to.
+        relay_id: The relay ID to send to (defaults to session relay).
         content: The message text to send.
-        agent: The name of the agent sending the message.
-        api_key: Optional API key for authentication.
+        agent: The name of the agent sending the message (defaults to session agent).
+        api_key: Optional API key for authentication (defaults to session key).
     """
+    relay_id = relay_id or _session.get("relay_id", "")
+    agent = agent or _session.get("agent", "")
+    api_key = api_key or _session.get("api_key", "")
+
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+    if not content:
+        return {"error": "Message content is required."}
+    if not agent:
+        return {"error": "No agent name provided and no active session."}
+
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -90,13 +149,17 @@ def relay_send(relay_id: str, content: str, agent: str, api_key: str = "") -> di
 
 
 @mcp.tool()
-def relay_read(relay_id: str, limit: int = 20) -> dict:
+def relay_read(relay_id: str = "", limit: int = 20) -> dict:
     """Read recent messages from a relay.
 
     Args:
-        relay_id: The relay ID to read from.
+        relay_id: The relay ID to read from (defaults to session relay).
         limit: Maximum number of messages to return (default: 20).
     """
+    relay_id = relay_id or _session.get("relay_id", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
     try:
         resp = _client.get(
             f"/relays/{relay_id}/history",
@@ -109,12 +172,16 @@ def relay_read(relay_id: str, limit: int = 20) -> dict:
 
 
 @mcp.tool()
-def relay_status(relay_id: str) -> dict:
+def relay_status(relay_id: str = "") -> dict:
     """Get current relay status including whose turn it is, agent names, and message count.
 
     Args:
-        relay_id: The relay ID to check.
+        relay_id: The relay ID to check (defaults to session relay).
     """
+    relay_id = relay_id or _session.get("relay_id", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
     try:
         resp = _client.get(f"/relays/{relay_id}")
         resp.raise_for_status()
@@ -124,16 +191,19 @@ def relay_status(relay_id: str) -> dict:
 
 
 @mcp.tool()
-def relay_watch(relay_id: str, duration: int = 30) -> dict:
+def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
     """Watch a relay for new messages using Server-Sent Events.
     Returns messages received during the watch period.
 
     Args:
-        relay_id: The relay ID to watch.
+        relay_id: The relay ID to watch (defaults to session relay).
         duration: How many seconds to watch (default 30, max 120).
     """
-    import json
     import time
+
+    relay_id = relay_id or _session.get("relay_id", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
 
     duration = min(duration, 120)
     messages = []

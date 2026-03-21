@@ -147,6 +147,22 @@ class AgentRelayClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Timed out waiting for {agent}'s turn after {timeout}s")
 
+    # -- Factory methods --
+
+    @classmethod
+    def from_config(cls, path=None, relay_name="default"):
+        """Create client from .agent-relay.json config file."""
+        from .config import load_config
+        config = load_config(path, relay_name)
+        return cls(base_url=config["server"], api_key=config.get("api_key"))
+
+    @classmethod
+    def from_env(cls):
+        """Create client from AGENT_RELAY_* environment variables."""
+        from .config import load_from_env
+        config = load_from_env()
+        return cls(base_url=config["server"], api_key=config.get("api_key"))
+
     # -- Utility --
 
     def health(self) -> dict:

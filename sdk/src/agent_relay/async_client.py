@@ -212,6 +212,22 @@ class AsyncAgentRelayClient:
             except asyncio.CancelledError:
                 break
 
+    # -- Factory methods --
+
+    @classmethod
+    def from_config(cls, path=None, relay_name="default"):
+        """Create client from .agent-relay.json config file."""
+        from .config import load_config
+        config = load_config(path, relay_name)
+        return cls(base_url=config["server"], api_key=config.get("api_key"))
+
+    @classmethod
+    def from_env(cls):
+        """Create client from AGENT_RELAY_* environment variables."""
+        from .config import load_from_env
+        config = load_from_env()
+        return cls(base_url=config["server"], api_key=config.get("api_key"))
+
     # -- Utility --
 
     async def health(self) -> dict:
