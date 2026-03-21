@@ -31,7 +31,7 @@ export default function AgentSelector({ relayId, onSelect }) {
     );
   }
 
-  const agents = relay?.agents || [];
+  const agents = relay?.agent_names || relay?.agents || [];
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-800 p-6 sm:p-8 animate-fade-in-up">
