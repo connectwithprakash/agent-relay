@@ -1,8 +1,9 @@
 """
 Relay service - Business logic for relay operations
 """
+import hashlib
 import secrets
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
 from ..models import Relay, Message
@@ -18,24 +19,39 @@ class RelayService:
         return f"relay-{secrets.token_urlsafe(8)}"
     
     @staticmethod
-    def create_relay(db: Session, request: CreateRelayRequest) -> Relay:
-        """Create a new relay"""
+    def create_relay(db: Session, request: CreateRelayRequest) -> Tuple[Relay, str]:
+        """Create a new relay with an API key.
+
+        Returns:
+            Tuple of (relay, plaintext_api_key)
+        """
         relay_id = RelayService.generate_relay_id()
-        
+        api_key = secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+
         relay = Relay(
             id=relay_id,
             agent_names=request.agent_names,
             agent_count=len(request.agent_names),
             current_turn=0,
             is_public=request.is_public,
-            owner_id=request.owner_id
+            owner_id=request.owner_id,
+            api_key_hash=api_key_hash,
         )
-        
+
         db.add(relay)
         db.commit()
         db.refresh(relay)
-        
-        return relay
+
+        return relay, api_key
+
+    @staticmethod
+    def verify_api_key(relay: Relay, provided_key: str) -> bool:
+        """Verify that a provided API key matches the relay's stored hash."""
+        if relay.api_key_hash is None:
+            return True
+        key_hash = hashlib.sha256(provided_key.encode()).hexdigest()
+        return key_hash == relay.api_key_hash
     
     @staticmethod
     def get_relay_state(db: Session, relay: Relay) -> RelayState:
@@ -61,7 +77,7 @@ class RelayService:
         )
     
     @staticmethod
-    def validate_agent(relay: Relay, agent: Optional[str]) -> tuple[str, int]:
+    def validate_agent(relay: Relay, agent: Optional[str]) -> Tuple[str, int]:
         """
         Validate agent exists and get agent info.
         

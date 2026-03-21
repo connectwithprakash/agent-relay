@@ -19,6 +19,7 @@ class Relay(Base):
     agent_names = Column(JSON)  # List of agent names
     is_public = Column(Boolean, default=False)  # Privacy control
     owner_id = Column(String, nullable=True)  # Owner identifier for access control
+    api_key_hash = Column(String, nullable=True)  # SHA-256 hash of API key
 
     # Relationships
     messages = relationship("Message", back_populates="relay", cascade="all, delete-orphan")

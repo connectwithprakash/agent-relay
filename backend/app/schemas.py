@@ -17,6 +17,7 @@ class CreateRelayResponse(BaseModel):
     relay_id: str
     agent_names: list[str]
     current_turn: str
+    api_key: Optional[str] = None
 
 
 class RelayState(BaseModel):
@@ -61,6 +62,20 @@ class MessageSchema(BaseModel):
 class MessageHistory(BaseModel):
     relay_id: str
     messages: list[MessageSchema]
+    total_count: int
+
+
+class RelayListItem(BaseModel):
+    relay_id: str
+    agent_names: list[str]
+    current_turn: str
+    message_count: int
+    is_public: bool
+    created_at: str
+
+
+class RelayListResponse(BaseModel):
+    relays: list[RelayListItem]
     total_count: int
 
 
