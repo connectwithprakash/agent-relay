@@ -14,9 +14,11 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+import json
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from sse_starlette.sse import EventSourceResponse
 
 from .config import settings
 from .logging_config import setup_logging
@@ -93,6 +95,8 @@ class ConnectionManager:
     def __init__(self):
         # relay_id -> list of (agent_name, websocket)
         self.active_connections: Dict[str, List[tuple[str, WebSocket]]] = {}
+        # relay_id -> list of asyncio.Queue (one per SSE spectator)
+        self.spectators: Dict[str, List[asyncio.Queue]] = {}
 
     async def connect(self, relay_id: str, agent_name: str, websocket: WebSocket):
         await websocket.accept()
@@ -106,25 +110,46 @@ class ConnectionManager:
                 (name, ws) for name, ws in self.active_connections[relay_id]
                 if ws != websocket
             ]
-            # Clean up empty relay entries to prevent unbounded memory growth
             if not self.active_connections[relay_id]:
                 del self.active_connections[relay_id]
 
+    def add_spectator(self, relay_id: str, queue: asyncio.Queue):
+        """Register a spectator queue for SSE streaming."""
+        if relay_id not in self.spectators:
+            self.spectators[relay_id] = []
+        self.spectators[relay_id].append(queue)
+
+    def remove_spectator(self, relay_id: str, queue: asyncio.Queue):
+        """Unregister a spectator queue."""
+        if relay_id in self.spectators:
+            self.spectators[relay_id] = [q for q in self.spectators[relay_id] if q is not queue]
+            if not self.spectators[relay_id]:
+                del self.spectators[relay_id]
+
+    def spectator_count(self, relay_id: str) -> int:
+        """Return the number of active spectators for a relay."""
+        return len(self.spectators.get(relay_id, []))
+
     async def broadcast_message(self, relay_id: str, message: dict):
-        """Broadcast message to all connected WebSockets for this relay"""
-        if relay_id not in self.active_connections:
-            return
+        """Broadcast message to all connected WebSockets and SSE spectators."""
+        # WebSocket broadcast
+        if relay_id in self.active_connections:
+            disconnected = []
+            for agent_name, websocket in self.active_connections[relay_id]:
+                try:
+                    await websocket.send_json(message)
+                except Exception:
+                    disconnected.append((agent_name, websocket))
+            for agent_name, websocket in disconnected:
+                self.disconnect(relay_id, agent_name, websocket)
 
-        disconnected = []
-        for agent_name, websocket in self.active_connections[relay_id]:
-            try:
-                await websocket.send_json(message)
-            except Exception:
-                disconnected.append((agent_name, websocket))
-
-        # Clean up disconnected websockets
-        for agent_name, websocket in disconnected:
-            self.disconnect(relay_id, agent_name, websocket)
+        # SSE spectator broadcast
+        if relay_id in self.spectators:
+            for queue in self.spectators[relay_id]:
+                try:
+                    queue.put_nowait(message)
+                except asyncio.QueueFull:
+                    pass  # Drop message for slow spectators
 
 manager = ConnectionManager()
 
@@ -500,6 +525,37 @@ async def websocket_endpoint(
             manager.disconnect(relay_id, agent, websocket)
     finally:
         db.close()
+
+@app.get("/relays/{relay_id}/watch")
+async def watch_relay(relay_id: str, request: Request, db: Session = Depends(get_db)):
+    """Watch relay messages in real-time via Server-Sent Events (read-only spectator mode)."""
+    relay = get_relay_or_404(db, relay_id)
+
+    if not relay.is_public and not PrivacyService.check_access(relay, None):
+        raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
+
+    async def event_generator():
+        queue = asyncio.Queue(maxsize=100)
+        manager.add_spectator(relay_id, queue)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield {"event": "message", "data": json.dumps(message)}
+                except asyncio.TimeoutError:
+                    yield {"event": "heartbeat", "data": ""}
+        finally:
+            manager.remove_spectator(relay_id, queue)
+
+    return EventSourceResponse(event_generator())
+
+@app.get("/relays/{relay_id}/spectators")
+async def get_spectator_count(relay_id: str, db: Session = Depends(get_db)):
+    """Get the number of active spectators watching a relay."""
+    get_relay_or_404(db, relay_id)
+    return {"relay_id": relay_id, "spectator_count": manager.spectator_count(relay_id)}
 
 @app.get("/health")
 async def health_check():
