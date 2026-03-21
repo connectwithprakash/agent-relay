@@ -20,6 +20,12 @@ export function useSSE(url, options = {}) {
   const eventSourceRef = useRef(null);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
+  // Store callbacks in refs to avoid reconnect loops from inline arrow functions
+  const callbacksRef = useRef({ onMessage, onOpen, onError });
+  useEffect(() => {
+    callbacksRef.current = { onMessage, onOpen, onError };
+  });
+
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -39,13 +45,13 @@ export function useSSE(url, options = {}) {
 
       es.onopen = () => {
         setConnectionStatus('connected');
-        if (onOpen) onOpen();
+        if (callbacksRef.current.onOpen) callbacksRef.current.onOpen();
       };
 
       es.addEventListener('message', (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (onMessage) onMessage(data);
+          if (callbacksRef.current.onMessage) callbacksRef.current.onMessage(data);
         } catch (err) {
           console.error('[SSE] Failed to parse message:', err);
         }
@@ -58,7 +64,7 @@ export function useSSE(url, options = {}) {
         } else {
           setConnectionStatus('error');
         }
-        if (onError) onError(error);
+        if (callbacksRef.current.onError) callbacksRef.current.onError(error);
       };
 
       eventSourceRef.current = es;
@@ -66,7 +72,7 @@ export function useSSE(url, options = {}) {
       console.error('[SSE] Connection failed:', err);
       setConnectionStatus('error');
     }
-  }, [url, enabled, onMessage, onOpen, onError, disconnect]);
+  }, [url, enabled, disconnect]);
 
   useEffect(() => {
     if (enabled) {
