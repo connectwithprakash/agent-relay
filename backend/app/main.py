@@ -3,10 +3,15 @@ Agent Relay - FastAPI Application
 Clean architecture with services and repositories
 """
 import asyncio
-from typing import Dict, List
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+import hashlib
+from typing import Dict, List, Optional
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from .database import init_db, SessionLocal
 from .models import Relay, Message, Webhook
@@ -15,10 +20,13 @@ from .schemas import (
     RelayState, SendMessageRequest, SendMessageResponse,
     MessageHistory, MessageSchema,
     RegisterWebhookRequest, RegisterWebhookResponse,
-    WebhookSchema
+    WebhookSchema, RelayListResponse, RelayListItem,
 )
 from .services import PrivacyService, RelayService, WebhookService
 from .repositories import RelayRepository, MessageRepository, WebhookRepository
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -26,6 +34,9 @@ app = FastAPI(
     description="Turn-based agent-to-agent communication with WebSocket and webhooks",
     version="2.0.0"
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
 app.add_middleware(
@@ -95,17 +106,84 @@ def get_relay_or_404(db: Session, relay_id: str) -> Relay:
         raise HTTPException(status_code=404, detail=f"Relay {relay_id} not found")
     return relay
 
+
+# Auth helpers
+async def get_api_key(
+    authorization: str = Header(None),
+    x_api_key: str = Header(None, alias="X-API-Key"),
+) -> Optional[str]:
+    """Extract API key from Authorization Bearer header or X-API-Key header."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:]
+    return x_api_key
+
+
+async def require_relay_auth(
+    relay_id: str,
+    api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db),
+) -> Relay:
+    """Verify API key for relay write operations."""
+    repo = RelayRepository(db)
+    relay = repo.get_by_id(relay_id)
+    if not relay:
+        raise HTTPException(status_code=404, detail=f"Relay {relay_id} not found")
+
+    # Legacy relays without api_key_hash allow access without a key
+    if relay.api_key_hash is None:
+        return relay
+
+    if api_key is None:
+        raise HTTPException(status_code=401, detail="API key required")
+
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    if key_hash != relay.api_key_hash:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    return relay
+
+
 # API Endpoints
 
 @app.post("/relays", response_model=CreateRelayResponse)
-async def create_relay(req: CreateRelayRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def create_relay(request: Request, req: CreateRelayRequest, db: Session = Depends(get_db)):
     """Create a new relay"""
-    relay = RelayService.create_relay(db, req)
+    relay, api_key = RelayService.create_relay(db, req)
     return CreateRelayResponse(
         relay_id=relay.id,
         agent_names=relay.agent_names,
-        current_turn=relay.agent_names[0]
+        current_turn=relay.agent_names[0],
+        api_key=api_key,
     )
+
+@app.get("/relays", response_model=RelayListResponse)
+@limiter.limit("30/minute")
+async def list_relays(
+    request: Request,
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """List public relays with pagination"""
+    repo = RelayRepository(db)
+    message_repo = MessageRepository(db)
+    relays = repo.list_public(limit, offset)
+    total_count = repo.count_public()
+
+    items = []
+    for relay in relays:
+        msg_count = message_repo.count_by_relay_id(relay.id)
+        items.append(RelayListItem(
+            relay_id=relay.id,
+            agent_names=relay.agent_names,
+            current_turn=relay.agent_names[relay.current_turn],
+            message_count=msg_count,
+            is_public=relay.is_public,
+            created_at=relay.created_at.isoformat(),
+        ))
+
+    return RelayListResponse(relays=items, total_count=total_count)
 
 @app.get("/relays/{relay_id}", response_model=RelayState)
 async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Depends(get_db)):
@@ -118,9 +196,15 @@ async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Dep
     return RelayService.get_relay_state(db, relay)
 
 @app.post("/relays/{relay_id}/messages", response_model=SendMessageResponse)
-async def send_message(relay_id: str, req: SendMessageRequest, db: Session = Depends(get_db)):
-    """Send a message (only if your turn)"""
-    relay = get_relay_or_404(db, relay_id)
+@limiter.limit("30/minute")
+async def send_message(
+    request: Request,
+    req: SendMessageRequest,
+    relay: Relay = Depends(require_relay_auth),
+    db: Session = Depends(get_db),
+):
+    """Send a message (only if your turn). Requires API key for authenticated relays."""
+    relay_id = relay.id
 
     # Validate agent and turn using service
     try:
@@ -168,7 +252,9 @@ async def send_message(relay_id: str, req: SendMessageRequest, db: Session = Dep
     )
 
 @app.get("/relays/{relay_id}/history", response_model=MessageHistory)
+@limiter.limit("60/minute")
 async def get_message_history(
+    request: Request,
     relay_id: str,
     limit: int = 50,
     offset: int = 0,
@@ -205,11 +291,10 @@ async def get_message_history(
 async def register_webhook(
     relay_id: str,
     req: RegisterWebhookRequest,
-    db: Session = Depends(get_db)
+    relay: Relay = Depends(require_relay_auth),
+    db: Session = Depends(get_db),
 ):
-    """Register a webhook for receiving real-time updates"""
-    relay = get_relay_or_404(db, relay_id)
-
+    """Register a webhook for receiving real-time updates. Requires API key for authenticated relays."""
     try:
         _, agent_index = RelayService.validate_agent(relay, req.agent)
     except ValueError as e:
