@@ -34,6 +34,14 @@ class ConnectionManager:
             if not self.active_connections[relay_id]:
                 del self.active_connections[relay_id]
 
+    def cleanup_relay(self, relay_id: str):
+        """Remove per-relay lock when a relay has no connections and no spectators."""
+        has_connections = relay_id in self.active_connections
+        has_spectators = relay_id in self.spectators
+        if not has_connections and not has_spectators:
+            with _relay_locks_guard:
+                _relay_locks.pop(relay_id, None)
+
     def add_spectator(self, relay_id: str, queue: asyncio.Queue):
         """Register a spectator queue for SSE streaming."""
         if relay_id not in self.spectators:

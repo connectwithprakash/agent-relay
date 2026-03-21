@@ -84,7 +84,7 @@ class RelayService:
         agent_names = relay.agent_names or []
         current_turn = (
             agent_names[relay.current_turn]
-            if agent_names and relay.current_turn < len(agent_names)
+            if agent_names and 0 <= relay.current_turn < len(agent_names)
             else None
         )
         status = "open" if not agent_names else "active"
@@ -141,7 +141,7 @@ class RelayService:
         if agent_index != relay.current_turn:
             current = (
                 agent_names[relay.current_turn]
-                if agent_names and relay.current_turn < len(agent_names)
+                if agent_names and 0 <= relay.current_turn < len(agent_names)
                 else "unknown"
             )
             raise ValueError(
