@@ -325,13 +325,6 @@ export default function HomePage() {
         joinCodeError={joinCodeError}
         onCreateClick={handleCreateClick}
       />
-      <QuickActionCards onCreateClick={handleCreateClick} onJoin={(value) => {
-        if (value.startsWith('relay-')) {
-          navigate(`/relay/${value}`);
-        } else {
-          getRelayByCode(value.toUpperCase()).then(r => navigate(`/relay/${r.relay_id}`)).catch(() => alert('Invalid relay ID or join code'));
-        }
-      }} />
       <HowItWorks />
       <PublicRelaysSection relays={relays} loading={loading} error={error} navigate={navigate} />
       <Footer />
