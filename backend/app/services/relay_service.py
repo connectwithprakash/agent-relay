@@ -3,6 +3,7 @@ Relay service - Business logic for relay operations
 """
 import hashlib
 import secrets
+from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,8 @@ class RelayService:
             is_public=request.is_public,
             owner_id=request.owner_id,
             api_key_hash=api_key_hash,
+            turn_timeout=getattr(request, 'turn_timeout', None),
+            turn_started_at=datetime.now(timezone.utc),
         )
 
         db.add(relay)
@@ -112,5 +115,6 @@ class RelayService:
     def advance_turn(db: Session, relay: Relay) -> str:
         """Advance to next agent's turn and return next agent name"""
         relay.current_turn = (relay.current_turn + 1) % relay.agent_count
+        relay.turn_started_at = datetime.now(timezone.utc)
         db.commit()
         return relay.agent_names[relay.current_turn]

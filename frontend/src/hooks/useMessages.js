@@ -46,7 +46,10 @@ export function useMessages(relayId, agentName) {
    * Used for WebSocket real-time updates
    */
   const addMessage = useCallback((message) => {
-    setMessages((prev) => [...prev, message]);
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === message.id)) return prev;
+      return [...prev, message];
+    });
   }, []);
 
   /**

@@ -15,6 +15,7 @@ class CreateRelayRequest(BaseModel):
     agent_names: list[str] = Field(default=["agent_0", "agent_1"], min_length=2, max_length=10)
     is_public: bool = False
     owner_id: Optional[str] = None
+    turn_timeout: Optional[int] = Field(default=None, ge=1, description="Seconds per turn before auto-advance. None = no timeout.")
 
 
 class CreateRelayResponse(BaseModel):
@@ -104,20 +105,6 @@ class RegisterWebhookResponse(BaseModel):
     webhook_id: int
     url: str
     agent: str
-
-
-class RelayListItem(BaseModel):
-    relay_id: str
-    agent_names: list[str]
-    current_turn: str
-    message_count: int
-    is_public: bool
-    created_at: str
-
-
-class RelayListResponse(BaseModel):
-    relays: list[RelayListItem]
-    total_count: int
 
 
 class WebhookSchema(BaseModel):

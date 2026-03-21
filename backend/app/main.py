@@ -6,7 +6,9 @@ import asyncio
 import hashlib
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +21,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .logging_config import setup_logging
 from .middleware import RequestLoggingMiddleware
-from .database import init_db, SessionLocal
+from .database import init_db, SessionLocal, get_db
 from .models import Relay, Message, Webhook
 from .schemas import (
     CreateRelayRequest, CreateRelayResponse,
@@ -36,6 +38,18 @@ logger = logging.getLogger("agent_relay.app")
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
+
+# Per-relay locks to prevent race conditions in send_message
+_relay_locks: dict[str, threading.Lock] = {}
+_relay_locks_guard = threading.Lock()
+
+
+def get_relay_lock(relay_id: str) -> threading.Lock:
+    """Get or create a per-relay threading lock."""
+    with _relay_locks_guard:
+        if relay_id not in _relay_locks:
+            _relay_locks[relay_id] = threading.Lock()
+        return _relay_locks[relay_id]
 
 
 @asynccontextmanager
@@ -114,14 +128,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Database dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # Helper function
 def get_relay_or_404(db: Session, relay_id: str) -> Relay:
     """Get relay by ID or raise 404"""
@@ -130,6 +136,20 @@ def get_relay_or_404(db: Session, relay_id: str) -> Relay:
     if not relay:
         raise HTTPException(status_code=404, detail=f"Relay {relay_id} not found")
     return relay
+
+
+def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
+    """If the relay has a turn timeout and it has elapsed, auto-advance the turn."""
+    if relay.turn_timeout is None or relay.turn_started_at is None:
+        return
+    now = datetime.now(timezone.utc)
+    started = relay.turn_started_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    elapsed = (now - started).total_seconds()
+    if elapsed >= relay.turn_timeout:
+        RelayService.advance_turn(db, relay)
+        logger.info("Auto-advanced timed-out turn for relay %s", relay.id)
 
 
 # Auth helpers
@@ -183,13 +203,9 @@ async def create_relay(request: Request, req: CreateRelayRequest, db: Session = 
     )
 
 @app.get("/relays", response_model=RelayListResponse)
-<<<<<<< HEAD
 @limiter.limit("30/minute")
 async def list_relays(
     request: Request,
-=======
-async def list_relays(
->>>>>>> fix/performance
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -200,27 +216,17 @@ async def list_relays(
     relays = repo.list_public(limit, offset)
     total_count = repo.count_public()
 
-<<<<<<< HEAD
-    items = []
-    for relay in relays:
-        msg_count = message_repo.count_by_relay_id(relay.id)
-=======
     # Batch fetch message counts to avoid N+1 queries
     relay_ids = [relay.id for relay in relays]
     counts = message_repo.count_by_relay_ids(relay_ids)
 
     items = []
     for relay in relays:
->>>>>>> fix/performance
         items.append(RelayListItem(
             relay_id=relay.id,
             agent_names=relay.agent_names,
             current_turn=relay.agent_names[relay.current_turn],
-<<<<<<< HEAD
-            message_count=msg_count,
-=======
             message_count=counts.get(relay.id, 0),
->>>>>>> fix/performance
             is_public=relay.is_public,
             created_at=relay.created_at.isoformat(),
         ))
@@ -235,6 +241,9 @@ async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Dep
     if not PrivacyService.check_access(relay, owner_id):
         raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
 
+    # Auto-advance if turn has timed out
+    _check_and_advance_timeout(db, relay)
+
     return RelayService.get_relay_state(db, relay)
 
 @app.post("/relays/{relay_id}/messages", response_model=SendMessageResponse)
@@ -248,30 +257,40 @@ async def send_message(
     """Send a message (only if your turn). Requires API key for authenticated relays."""
     relay_id = relay.id
 
-    # Validate agent and turn using service
-    try:
-        agent, agent_index = RelayService.validate_agent(relay, req.agent)
-        RelayService.validate_turn(relay, agent_index)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # Use per-relay lock to prevent race conditions between
+    # turn validation, message creation, and turn advancement
+    lock = get_relay_lock(relay_id)
+    with lock:
+        # Re-read relay inside lock to get fresh state
+        db.refresh(relay)
 
-    # Create message
-    message_repo = MessageRepository(db)
-    message = Message(
-        relay_id=relay_id,
-        agent_index=agent_index,
-        agent_name=agent,
-        content=req.content,
-        data=req.data,
-        type=req.type
-    )
-    message = message_repo.create(message)
+        # Auto-advance if turn has timed out
+        _check_and_advance_timeout(db, relay)
 
-    # Switch turn
-    next_turn = RelayService.advance_turn(db, relay)
-    message_count = message_repo.count_by_relay_id(relay_id)
+        # Validate agent and turn using service
+        try:
+            agent, agent_index = RelayService.validate_agent(relay, req.agent)
+            RelayService.validate_turn(relay, agent_index)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    # Prepare broadcast payload
+        # Create message
+        message_repo = MessageRepository(db)
+        message = Message(
+            relay_id=relay_id,
+            agent_index=agent_index,
+            agent_name=agent,
+            content=req.content,
+            data=req.data,
+            type=req.type
+        )
+        message = message_repo.create(message)
+
+        # Switch turn
+        next_turn = RelayService.advance_turn(db, relay)
+        message_count = message_repo.count_by_relay_id(relay_id)
+
+    # Prepare broadcast payload (outside lock)
     message_dict = {
         "id": message.id,
         "agent": message.agent_name,
@@ -292,6 +311,59 @@ async def send_message(
         next_turn=next_turn,
         message_count=message_count
     )
+
+
+@app.post("/relays/{relay_id}/skip-turn")
+@limiter.limit("10/minute")
+async def skip_turn(
+    request: Request,
+    relay: Relay = Depends(require_relay_auth),
+    db: Session = Depends(get_db),
+):
+    """Skip the current turn if the turn timeout has elapsed.
+
+    Only succeeds when the relay has a turn_timeout configured and the
+    current turn's time has been exceeded.
+    """
+    relay_id = relay.id
+    lock = get_relay_lock(relay_id)
+    with lock:
+        db.refresh(relay)
+
+        if relay.turn_timeout is None:
+            raise HTTPException(
+                status_code=400,
+                detail="This relay has no turn timeout configured."
+            )
+
+        if relay.turn_started_at is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Turn has not started yet."
+            )
+
+        now = datetime.now(timezone.utc)
+        started = relay.turn_started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        elapsed = (now - started).total_seconds()
+
+        if elapsed < relay.turn_timeout:
+            remaining = relay.turn_timeout - elapsed
+            raise HTTPException(
+                status_code=400,
+                detail=f"Turn has not timed out yet. {remaining:.0f}s remaining."
+            )
+
+        skipped_agent = relay.agent_names[relay.current_turn]
+        next_turn = RelayService.advance_turn(db, relay)
+
+    return {
+        "status": "ok",
+        "skipped_agent": skipped_agent,
+        "next_turn": next_turn,
+    }
+
 
 @app.get("/relays/{relay_id}/history", response_model=MessageHistory)
 @limiter.limit("60/minute")

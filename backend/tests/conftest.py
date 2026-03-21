@@ -8,7 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base
-from app.main import app, get_db
+from app.main import app
+from app.database import get_db
 
 
 # In-memory SQLite for testing - use StaticPool to share the same connection
@@ -47,7 +48,7 @@ def db_session():
 
 
 @pytest.fixture()
-def client(db_session):
+def client(db_session, monkeypatch):
     """Create a test client that uses the transactional db session."""
     def override_get_db():
         try:
@@ -56,6 +57,20 @@ def client(db_session):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # Patch SessionLocal in main module so WebSocket endpoint uses test DB.
+    # Wrap the session so that the WS endpoint's db.close() is a no-op
+    # (the real cleanup happens in the db_session fixture teardown).
+    class _NoCloseSession:
+        """Proxy that forwards everything to the real session except close()."""
+        def __init__(self, real):
+            self._real = real
+        def close(self):
+            pass  # no-op
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    monkeypatch.setattr("app.main.SessionLocal", lambda: _NoCloseSession(db_session))
 
     # Disable rate limiting for tests
     app.state.limiter.enabled = False

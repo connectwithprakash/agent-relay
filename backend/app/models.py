@@ -2,14 +2,8 @@
 Database models for Agent Relay
 """
 from datetime import datetime
-<<<<<<< HEAD
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
-from sqlalchemy.orm import declarative_base, relationship
-=======
 from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
->>>>>>> fix/performance
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
@@ -26,6 +20,8 @@ class Relay(Base):
     is_public = Column(Boolean, default=False)  # Privacy control
     owner_id = Column(String, nullable=True)  # Owner identifier for access control
     api_key_hash = Column(String, nullable=True)  # SHA-256 hash of API key
+    turn_timeout = Column(Integer, nullable=True)  # Seconds per turn, None = no timeout
+    turn_started_at = Column(DateTime, nullable=True)  # When the current turn began
 
     # Relationships
     messages = relationship("Message", back_populates="relay", cascade="all, delete-orphan")

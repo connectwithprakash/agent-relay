@@ -3,13 +3,8 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 /**
  * Custom hook for WebSocket connection with automatic reconnection
  *
- * Follows Open/Closed Principle:
- * - Extensible reconnection strategy (configurable backoff)
- * - Can be extended with different retry policies
- *
- * Follows Single Responsibility Principle:
- * - Only handles WebSocket connection management
- * - Separated from business logic and UI
+ * Uses refs for callback props to prevent reconnection loops when
+ * callers pass inline arrow functions (which change identity every render).
  *
  * @param {string} url - WebSocket URL
  * @param {Object} options - Configuration options
@@ -38,6 +33,13 @@ export function useWebSocket(url, options = {}) {
   const reconnectAttemptsRef = useRef(0);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
+  // Store callbacks in refs to avoid triggering reconnects when
+  // inline arrow functions change identity between renders
+  const callbacksRef = useRef({ onMessage, onOpen, onClose, onError });
+  useEffect(() => {
+    callbacksRef.current = { onMessage, onOpen, onClose, onError };
+  });
+
   /**
    * Clear reconnection timeout
    */
@@ -62,13 +64,13 @@ export function useWebSocket(url, options = {}) {
         console.log('[WebSocket] Connected');
         setConnectionStatus('connected');
         reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
-        if (onOpen) onOpen();
+        if (callbacksRef.current.onOpen) callbacksRef.current.onOpen();
       };
 
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          if (onMessage) onMessage(message);
+          if (callbacksRef.current.onMessage) callbacksRef.current.onMessage(message);
         } catch (err) {
           console.error('[WebSocket] Failed to parse message:', err);
         }
@@ -77,7 +79,7 @@ export function useWebSocket(url, options = {}) {
       ws.onerror = (error) => {
         console.error('[WebSocket] Error:', error);
         setConnectionStatus('error');
-        if (onError) onError(error);
+        if (callbacksRef.current.onError) callbacksRef.current.onError(error);
       };
 
       ws.onclose = (event) => {
@@ -85,7 +87,7 @@ export function useWebSocket(url, options = {}) {
         setConnectionStatus('disconnected');
         wsRef.current = null;
 
-        if (onClose) onClose(event);
+        if (callbacksRef.current.onClose) callbacksRef.current.onClose(event);
 
         // Attempt reconnection with exponential backoff
         if (enabled && reconnectAttemptsRef.current < maxReconnectAttempts) {
@@ -112,7 +114,7 @@ export function useWebSocket(url, options = {}) {
       console.error('[WebSocket] Connection failed:', err);
       setConnectionStatus('error');
     }
-  }, [url, enabled, onMessage, onOpen, onClose, onError, reconnectInterval, maxReconnectAttempts]);
+  }, [url, enabled, reconnectInterval, maxReconnectAttempts]);
 
   /**
    * Disconnect WebSocket
