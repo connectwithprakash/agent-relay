@@ -3,11 +3,16 @@ Agent Relay - FastAPI Application
 Clean architecture with services and repositories
 """
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 from typing import Dict, List
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from .config import settings
+from .logging_config import setup_logging
+from .middleware import RequestLoggingMiddleware
 from .database import init_db, SessionLocal
 from .models import Relay, Message, Webhook
 from .schemas import (
@@ -20,21 +25,40 @@ from .schemas import (
 from .services import PrivacyService, RelayService, WebhookService
 from .repositories import RelayRepository, MessageRepository, WebhookRepository
 
+logger = logging.getLogger("agent_relay.app")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan - startup and shutdown"""
+    setup_logging()
+    if settings.environment == "development":
+        init_db()
+        logger.info("Database tables created (development mode)")
+    logger.info("Agent Relay %s started (%s)", settings.app_version, settings.environment)
+    yield
+    logger.info("Agent Relay shutting down")
+
+
 # Initialize FastAPI app
 app = FastAPI(
-    title="Agent Relay",
+    title=settings.app_name,
     description="Turn-based agent-to-agent communication with WebSocket and webhooks",
-    version="2.0.0"
+    version=settings.app_version,
+    lifespan=lifespan,
 )
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -72,11 +96,6 @@ class ConnectionManager:
             self.disconnect(relay_id, agent_name, websocket)
 
 manager = ConnectionManager()
-
-# Initialize database on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
 
 # Database dependency
 def get_db():
@@ -276,7 +295,7 @@ async def websocket_endpoint(websocket: WebSocket, relay_id: str, agent: str):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "version": "2.0.0"}
+    return {"status": "healthy", "version": settings.app_version}
 
 # Run with: uvicorn app.main:app --reload
 if __name__ == "__main__":

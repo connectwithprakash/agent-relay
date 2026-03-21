@@ -3,8 +3,7 @@ Database models for Agent Relay
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 

@@ -1,25 +1,33 @@
 """
 Database connection and session management
+Supports both SQLite (development) and PostgreSQL (production)
 """
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from contextlib import contextmanager
-from pathlib import Path
 
+from .config import settings
 from .models import Base
 
-# Database file location
-DB_PATH = Path(__file__).parent.parent.parent / "relay.db"
-DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-# Create engine
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},  # Needed for SQLite
-    echo=False  # Set to True for SQL debugging
-)
+def _build_engine():
+    """Build SQLAlchemy engine based on configuration"""
+    connect_args = {}
+    kwargs = {
+        "echo": settings.db_echo,
+    }
 
-# Create session factory
+    if settings.is_sqlite:
+        connect_args["check_same_thread"] = False
+    elif settings.is_postgres:
+        kwargs["pool_size"] = settings.db_pool_size
+        kwargs["max_overflow"] = settings.db_max_overflow
+        kwargs["pool_pre_ping"] = True
+
+    kwargs["connect_args"] = connect_args
+    return create_engine(settings.database_url, **kwargs)
+
+
+engine = _build_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -28,20 +36,10 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
 
-@contextmanager
 def get_db():
-    """Get database session with context manager"""
+    """Dependency for FastAPI endpoints"""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-
-def get_db_session() -> Session:
-    """Dependency for FastAPI endpoints"""
-    db = SessionLocal()
-    try:
-        return db
-    finally:
-        pass  # FastAPI will close it

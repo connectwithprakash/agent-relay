@@ -1,0 +1,10 @@
+**/.git
+**/node_modules
+**/__pycache__
+**/.venv
+**/*.pyc
+*.db
+*.sqlite*
+.DS_Store
+.env
+.env.local

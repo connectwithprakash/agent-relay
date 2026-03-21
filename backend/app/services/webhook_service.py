@@ -2,20 +2,21 @@
 Webhook service - Webhook delivery and management
 """
 import asyncio
+import logging
 from typing import List
 import httpx
 
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import Relay, Message, Webhook, WebhookDelivery
 from ..database import SessionLocal
+
+logger = logging.getLogger("agent_relay.webhooks")
 
 
 class WebhookService:
     """Service for webhook operations"""
-    
-    MAX_RETRIES = 3
-    TIMEOUT_SECONDS = 5.0
     
     @staticmethod
     async def trigger_webhooks(
@@ -48,10 +49,10 @@ class WebhookService:
             "created_at": message.created_at.isoformat()
         }
         
-        for attempt in range(1, WebhookService.MAX_RETRIES + 1):
+        for attempt in range(1, settings.webhook_max_retries + 1):
             try:
                 async with httpx.AsyncClient(
-                    timeout=WebhookService.TIMEOUT_SECONDS
+                    timeout=settings.webhook_timeout_seconds
                 ) as client:
                     response = await client.post(webhook.url, json=payload)
                     
@@ -59,12 +60,14 @@ class WebhookService:
                         await WebhookService._log_delivery(
                             webhook.id, message.id, "success", attempt
                         )
+                        logger.info("Webhook %d delivered (attempt %d)", webhook.id, attempt)
                         return
-                        
+
             except Exception as e:
                 error_msg = str(e)
+                logger.warning("Webhook %d attempt %d failed: %s", webhook.id, attempt, error_msg)
                 
-                if attempt >= WebhookService.MAX_RETRIES:
+                if attempt >= settings.webhook_max_retries:
                     await WebhookService._log_delivery(
                         webhook.id, message.id, "failed", attempt, error_msg
                     )
