@@ -1,15 +1,21 @@
 import { useParams, useSearchParams } from 'react-router-dom';
 import RelayDashboard from '../components/RelayDashboard';
+import SpectatorDashboard from '../components/SpectatorDashboard';
 import AgentSelector from '../components/AgentSelector';
 
 export default function RelayPage() {
   const { relayId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const agent = searchParams.get('agent');
+  const mode = searchParams.get('mode');
 
   const handleAgentSelect = (agentName) => {
     setSearchParams({ agent: agentName });
   };
+
+  if (mode === 'watch') {
+    return <SpectatorDashboard relayId={relayId} />;
+  }
 
   if (!agent) {
     return (
