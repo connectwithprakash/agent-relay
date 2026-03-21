@@ -73,6 +73,15 @@ export const updateRelayPrivacy = async (relayId, isPublic, ownerId) => {
 };
 
 /**
+ * List public relays
+ */
+export const listPublicRelays = async (limit = 20, offset = 0) => {
+  const response = await fetch(`${API_BASE_URL}/relays?limit=${limit}&offset=${offset}`);
+  if (!response.ok) throw new Error(`Failed to fetch relays: ${response.statusText}`);
+  return await response.json();
+};
+
+/**
  * Create WebSocket connection for real-time updates
  */
 export const connectWebSocket = (relayId, agent, onMessage) => {

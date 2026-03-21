@@ -10,3 +10,5 @@
 export { useRelay } from './useRelay';
 export { useWebSocket } from './useWebSocket';
 export { useMessages } from './useMessages';
+export { useRelayCreation } from './useRelayCreation';
+export { useRelayList } from './useRelayList';
