@@ -87,6 +87,34 @@ export default function RelayDashboard({ relayId, agentName }) {
 
   const agents = relay?.agent_names || relay?.agents || [];
 
+  // Handle relay deactivation (e.g., agent left, relay closed)
+  if (relay && relay.status !== 'active') {
+    const statusLabel = relay.status === 'open' ? 'waiting for agents' : relay.status || 'inactive';
+    return (
+      <div className="flex items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 px-4">
+        <div className="max-w-md w-full p-6 bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-amber-200 dark:border-amber-800 animate-scale-in text-center">
+          <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+            Relay {statusLabel}
+          </h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            This relay is no longer active. An agent may have left or the relay was closed.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-950">
       {/* Dashboard Header */}
