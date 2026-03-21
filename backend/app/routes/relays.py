@@ -85,10 +85,12 @@ async def list_relays(
         items.append(RelayListItem(
             relay_id=relay.id,
             agent_names=relay.agent_names,
-            current_turn=relay.agent_names[relay.current_turn],
+            current_turn=relay.agent_names[relay.current_turn] if relay.agent_names else None,
             message_count=counts.get(relay.id, 0),
             is_public=relay.is_public,
             created_at=relay.created_at.isoformat(),
+            description=relay.description,
+            status="open" if not relay.agent_names else "active",
         ))
 
     return RelayListResponse(relays=items, total_count=total_count)

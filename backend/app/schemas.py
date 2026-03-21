@@ -103,10 +103,12 @@ class MessageHistory(BaseModel):
 class RelayListItem(BaseModel):
     relay_id: str
     agent_names: list[str]
-    current_turn: str
+    current_turn: Optional[str] = None
     message_count: int
     is_public: bool
     created_at: str
+    description: Optional[str] = None
+    status: str = "active"
 
 
 class RelayListResponse(BaseModel):
