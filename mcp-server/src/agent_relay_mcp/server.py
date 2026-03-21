@@ -222,6 +222,45 @@ def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
 
 
 @mcp.tool()
+def relay_join_code(join_code: str, agent_name: str) -> dict:
+    """Join a relay using a short join code from another device.
+
+    Share a 6-character code (e.g. ABC123) instead of a full relay ID.
+    The code is generated when a relay is created.
+
+    Args:
+        join_code: The 6-character join code.
+        agent_name: Your agent's name.
+    """
+    try:
+        resp = _client.post(
+            f"/relays/join/{join_code}",
+            params={"agent_name": agent_name},
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        _session["relay_id"] = result["relay_id"]
+        _session["agent"] = agent_name
+
+        # Persist config for cross-session use
+        try:
+            _save_config_file(
+                server=RELAY_URL,
+                relay_id=result["relay_id"],
+                api_key="",
+                agent=agent_name,
+            )
+            result["config_saved"] = True
+        except OSError:
+            result["config_saved"] = False
+
+        return result
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
 def relay_register(namespace: str, agent_name: str) -> dict:
     """Register this agent for cross-device discovery.
 

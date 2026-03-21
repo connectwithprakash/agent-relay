@@ -56,6 +56,7 @@ async def create_relay(request: Request, req: CreateRelayRequest, db: Session = 
         agent_names=relay.agent_names,
         current_turn=relay.agent_names[0],
         api_key=api_key,
+        join_code=relay.join_code,
     )
 
 

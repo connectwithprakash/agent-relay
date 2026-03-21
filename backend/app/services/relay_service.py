@@ -2,7 +2,9 @@
 Relay service - Business logic for relay operations
 """
 import hashlib
+import random
 import secrets
+import string
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
@@ -21,6 +23,12 @@ class RelayService:
         return f"relay-{secrets.token_urlsafe(8)}"
 
     @staticmethod
+    def generate_join_code() -> str:
+        """Generate a 6-character human-readable join code (e.g. 'ABC123')."""
+        chars = string.ascii_uppercase + string.digits
+        return ''.join(random.choices(chars, k=6))
+
+    @staticmethod
     def create_relay(db: Session, request: CreateRelayRequest) -> Tuple[Relay, str]:
         """Create a new relay with an API key.
 
@@ -30,6 +38,7 @@ class RelayService:
         relay_id = RelayService.generate_relay_id()
         api_key = secrets.token_urlsafe(32)
         api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        join_code = RelayService.generate_join_code()
 
         relay = Relay(
             id=relay_id,
@@ -39,6 +48,7 @@ class RelayService:
             is_public=request.is_public,
             owner_id=request.owner_id,
             api_key_hash=api_key_hash,
+            join_code=join_code,
             turn_timeout=getattr(request, 'turn_timeout', None),
             turn_started_at=datetime.now(timezone.utc),
         )

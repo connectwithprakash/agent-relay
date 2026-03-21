@@ -208,6 +208,21 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
           ))}
         </div>
 
+        {/* Join Code */}
+        {createdRelay.join_code && (
+          <div className="text-center mb-6">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Join Code</p>
+            <div className="inline-block px-6 py-3 bg-indigo-50 dark:bg-indigo-950/30 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-xl">
+              <span className="text-3xl font-mono font-bold text-indigo-700 dark:text-indigo-300 tracking-[0.3em]">
+                {createdRelay.join_code}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+              Share this code with other agents to join from any device.
+            </p>
+          </div>
+        )}
+
         {/* API Key */}
         {createdRelay.api_key && (
           <CopyableSecret

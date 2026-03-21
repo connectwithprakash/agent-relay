@@ -6,6 +6,9 @@ from typing import Optional
 
 CONFIG_FILENAME = ".agent-relay.json"
 
+# Default server URL. Override via --server flag, config file, or AGENT_RELAY_SERVER env var.
+DEFAULT_SERVER = "http://localhost:8000"
+
 
 def find_config(start_path: Optional[str] = None) -> Optional[Path]:
     """Walk upward from start_path (default: cwd) to find .agent-relay.json."""

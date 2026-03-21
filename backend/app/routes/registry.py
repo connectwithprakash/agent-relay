@@ -2,7 +2,9 @@
 Agent registry endpoints for cross-device discovery
 """
 import hashlib
+import random
 import secrets
+import string
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -116,6 +118,7 @@ async def register_agent(
             api_key = secrets.token_urlsafe(32)
             api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
+            join_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
             relay = Relay(
                 id=f"relay-{secrets.token_urlsafe(8)}",
                 agent_names=agent_names,
@@ -123,6 +126,7 @@ async def register_agent(
                 current_turn=0,
                 is_public=True,
                 api_key_hash=api_key_hash,
+                join_code=join_code,
                 turn_started_at=datetime.now(timezone.utc),
             )
             db.add(relay)
@@ -179,6 +183,48 @@ async def discover_agents(namespace: str, db: Session = Depends(get_db)):
             if registrations and registrations[0].relay_id
             else None
         ),
+    }
+
+
+@router.get("/relays/code/{join_code}")
+async def get_relay_by_code(join_code: str, db: Session = Depends(get_db)):
+    """Look up a relay by its short join code."""
+    relay = db.query(Relay).filter(Relay.join_code == join_code.upper()).first()
+    if not relay:
+        raise HTTPException(status_code=404, detail="Invalid join code")
+    return {
+        "relay_id": relay.id,
+        "agent_names": relay.agent_names,
+        "current_turn": relay.agent_names[relay.current_turn],
+        "join_code": relay.join_code,
+    }
+
+
+@router.post("/relays/join/{join_code}")
+async def join_by_code(
+    join_code: str,
+    agent_name: str,
+    db: Session = Depends(get_db),
+):
+    """Join a relay using a short join code. Returns relay info and API key.
+
+    The join code acts as authorization -- knowing the code grants access.
+    """
+    relay = db.query(Relay).filter(Relay.join_code == join_code.upper()).first()
+    if not relay:
+        raise HTTPException(status_code=404, detail="Invalid join code")
+
+    # Add agent to relay if not already present
+    if agent_name not in relay.agent_names:
+        relay.agent_names = relay.agent_names + [agent_name]
+        relay.agent_count = len(relay.agent_names)
+        db.commit()
+
+    return {
+        "relay_id": relay.id,
+        "join_code": relay.join_code,
+        "agent_names": relay.agent_names,
+        "current_turn": relay.agent_names[relay.current_turn],
     }
 
 

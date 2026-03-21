@@ -36,6 +36,36 @@ export const createRelay = async (agentNames, ownerId = null, isPublic = false) 
 };
 
 /**
+ * Look up a relay by its short join code
+ */
+export const getRelayByCode = async (joinCode) => {
+  const response = await fetch(`${API_BASE_URL}/relays/code/${joinCode.toUpperCase()}`);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Invalid join code');
+    }
+    throw new Error(`Failed to look up join code: ${response.statusText}`);
+  }
+  return await response.json();
+};
+
+/**
+ * Join a relay using a short join code
+ */
+export const joinByCode = async (joinCode, agentName) => {
+  const url = new URL(`${API_BASE_URL}/relays/join/${joinCode.toUpperCase()}`);
+  url.searchParams.append('agent_name', agentName);
+  const response = await fetch(url, { method: 'POST' });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Invalid join code');
+    }
+    throw new Error(`Failed to join relay: ${response.statusText}`);
+  }
+  return await response.json();
+};
+
+/**
  * Send a message to a relay
  */
 export const sendMessage = async (relayId, content, agent, apiKey = null) => {

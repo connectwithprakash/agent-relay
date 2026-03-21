@@ -2,7 +2,7 @@
 import click
 
 from .client import AgentRelayClient
-from .config import save_config, load_config
+from .config import save_config, load_config, DEFAULT_SERVER
 
 
 @click.group()
@@ -13,7 +13,7 @@ def main():
 
 @main.command()
 @click.argument("agents", nargs=-1, required=True)
-@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
 @click.option("--public", is_flag=True, help="Make relay public")
 def create(agents, server, public):
     """Create a new relay with the given agent names."""
@@ -45,12 +45,33 @@ def create(agents, server, public):
 @click.argument("relay_id")
 @click.option("--agent", required=True, help="Your agent name")
 @click.option("--key", required=True, help="API key")
-@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
 def join(relay_id, agent, key, server):
     """Join an existing relay."""
     config_path = save_config(server, relay_id, key, agent)
     click.echo(f"Joined relay: {relay_id} as {agent}")
     click.echo(f"Config saved: {config_path}")
+
+
+@main.command("join-code")
+@click.argument("code")
+@click.argument("agent_name")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
+def join_code(code, agent_name, server):
+    """Join a relay using a short join code.
+
+    Example: agent-relay join-code ABC123 alice
+    """
+    client = AgentRelayClient(server)
+    try:
+        result = client.join_by_code(code, agent_name)
+        config_path = save_config(server, result["relay_id"], "", agent_name)
+        click.echo(f"Joined relay {result['relay_id']} as {agent_name}")
+        click.echo(f"Join code: {result['join_code']}")
+        click.echo(f"Agents: {', '.join(result['agent_names'])}")
+        click.echo(f"Config saved: {config_path}")
+    finally:
+        client.close()
 
 
 @main.command()
@@ -97,7 +118,7 @@ def send(message, name):
 @main.command()
 @click.argument("namespace")
 @click.argument("agent_name")
-@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
 @click.option("--wait/--no-wait", default=True, help="Wait for other agents to join")
 @click.option("--timeout", default=300, help="Seconds to wait for relay creation")
 def register(namespace, agent_name, server, wait, timeout):
@@ -139,7 +160,7 @@ def register(namespace, agent_name, server, wait, timeout):
 
 @main.command()
 @click.argument("namespace")
-@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
 def discover(namespace, server):
     """Discover agents in a namespace."""
     client = AgentRelayClient(server)

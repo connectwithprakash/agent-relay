@@ -147,6 +147,39 @@ class AgentRelayClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Timed out waiting for {agent}'s turn after {timeout}s")
 
+    # -- Join code operations --
+
+    def join_by_code(self, join_code: str, agent_name: str) -> dict:
+        """Join a relay using a short join code.
+
+        Args:
+            join_code: The 6-character code (e.g. 'ABC123').
+            agent_name: Name of the agent joining.
+
+        Returns:
+            Dict with relay_id, join_code, agent_names, and current_turn.
+        """
+        resp = self._request(
+            "POST",
+            f"/relays/join/{join_code}",
+            params={"agent_name": agent_name},
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
+    def get_relay_by_code(self, join_code: str) -> dict:
+        """Look up a relay by its short join code.
+
+        Args:
+            join_code: The 6-character code.
+
+        Returns:
+            Dict with relay_id, agent_names, current_turn, and join_code.
+        """
+        resp = self._request("GET", f"/relays/code/{join_code}")
+        _raise_for_status(resp)
+        return resp.json()
+
     # -- Discovery operations --
 
     def register(self, namespace: str, agent_name: str, device_id: str | None = None) -> dict:

@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useRelayList } from '../hooks';
 import RelayCard from '../components/RelayCard';
 import EmptyState from '../components/EmptyState';
+import { getRelayByCode } from '../utils/api';
 
-function HeroSection({ joinId, setJoinId, onJoin, onCreateClick }) {
+function HeroSection({ joinId, setJoinId, onJoin, joinCode, setJoinCode, onJoinByCode, joinCodeError, onCreateClick }) {
   return (
     <section className="relative overflow-hidden">
       {/* Background */}
@@ -51,6 +52,30 @@ function HeroSection({ joinId, setJoinId, onJoin, onCreateClick }) {
               Join
             </button>
           </form>
+
+          <form onSubmit={onJoinByCode} className="flex gap-2 w-full sm:w-auto">
+            <input
+              type="text"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
+              placeholder="Join code (e.g. ABC123)"
+              maxLength={6}
+              className="flex-1 sm:w-48 px-4 py-3.5 bg-white/10 backdrop-blur-sm text-white placeholder-white/50 border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-white/40 focus:bg-white/15 transition-all font-mono tracking-wider text-center uppercase"
+            />
+            <button
+              type="submit"
+              disabled={joinCode.trim().length < 6}
+              className="px-6 py-3.5 bg-emerald-500/80 backdrop-blur-sm text-white font-semibold rounded-xl border border-emerald-400/30 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+              Join Code
+            </button>
+          </form>
+          {joinCodeError && (
+            <p className="text-red-300 text-sm animate-fade-in">{joinCodeError}</p>
+          )}
         </div>
       </div>
     </section>
@@ -279,6 +304,8 @@ function Footer() {
 
 export default function HomePage() {
   const [joinId, setJoinId] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [joinCodeError, setJoinCodeError] = useState('');
   const navigate = useNavigate();
   const { relays, loading, error } = useRelayList();
 
@@ -290,6 +317,19 @@ export default function HomePage() {
     }
   };
 
+  const handleJoinByCode = async (e) => {
+    e.preventDefault();
+    const code = joinCode.trim().toUpperCase();
+    if (code.length !== 6) return;
+    setJoinCodeError('');
+    try {
+      const result = await getRelayByCode(code);
+      navigate(`/relay/${result.relay_id}`);
+    } catch (err) {
+      setJoinCodeError(err.message || 'Invalid join code');
+    }
+  };
+
   const handleCreateClick = () => navigate('/create');
 
   return (
@@ -298,6 +338,10 @@ export default function HomePage() {
         joinId={joinId}
         setJoinId={setJoinId}
         onJoin={handleJoin}
+        joinCode={joinCode}
+        setJoinCode={setJoinCode}
+        onJoinByCode={handleJoinByCode}
+        joinCodeError={joinCodeError}
         onCreateClick={handleCreateClick}
       />
       <QuickActionCards onCreateClick={handleCreateClick} navigate={navigate} />
