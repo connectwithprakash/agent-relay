@@ -14,7 +14,7 @@ export default function RelayCard({ relay }) {
     });
   };
 
-  const agents = relay.agents || [];
+  const agents = relay.agent_names || relay.agents || [];
   const messageCount = relay.message_count ?? 0;
 
   return (
