@@ -147,6 +147,65 @@ class AgentRelayClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Timed out waiting for {agent}'s turn after {timeout}s")
 
+    # -- Discovery operations --
+
+    def register(self, namespace: str, agent_name: str, device_id: str | None = None) -> dict:
+        """Register this agent in a namespace for cross-device discovery.
+
+        Returns relay info if a relay exists or is created, or a 'waiting' status
+        if not enough agents have joined yet.
+        """
+        params: dict[str, str] = {"namespace": namespace, "agent_name": agent_name}
+        if device_id:
+            params["device_id"] = device_id
+        resp = self._request("POST", "/agents/register", params=params)
+        _raise_for_status(resp)
+        return resp.json()
+
+    def discover(self, namespace: str) -> dict:
+        """Discover all agents and relays in a namespace."""
+        resp = self._request("GET", f"/agents/discover/{namespace}")
+        _raise_for_status(resp)
+        return resp.json()
+
+    def wait_for_relay(
+        self,
+        namespace: str,
+        agent_name: str,
+        poll_interval: float = 3.0,
+        timeout: float = 300.0,
+    ) -> dict:
+        """Register and poll until a relay is created in this namespace.
+
+        Args:
+            namespace: The shared namespace to join.
+            agent_name: This agent's name.
+            poll_interval: Seconds between discovery checks (default 3).
+            timeout: Maximum seconds to wait (default 300).
+
+        Returns:
+            Registration result dict with relay info once a relay is ready.
+
+        Raises:
+            TimeoutError: If no relay is created within *timeout* seconds.
+        """
+        result = self.register(namespace, agent_name)
+        if result["status"] in ("joined", "created"):
+            return result
+
+        device_id = result["device_id"]
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            time.sleep(poll_interval)
+            disc = self.discover(namespace)
+            if disc.get("relay_id"):
+                result = self.register(namespace, agent_name, device_id)
+                if result["status"] in ("joined", "created"):
+                    return result
+        raise TimeoutError(
+            f"No relay created in namespace '{namespace}' after {timeout}s"
+        )
+
     # -- Factory methods --
 
     @classmethod

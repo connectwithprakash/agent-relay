@@ -92,3 +92,66 @@ def send(message, name):
         click.echo(f"Sent! Next turn: {result.next_turn}")
     finally:
         client.close()
+
+
+@main.command()
+@click.argument("namespace")
+@click.argument("agent_name")
+@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+@click.option("--wait/--no-wait", default=True, help="Wait for other agents to join")
+@click.option("--timeout", default=300, help="Seconds to wait for relay creation")
+def register(namespace, agent_name, server, wait, timeout):
+    """Register in a namespace for cross-device discovery.
+
+    Example: agent-relay register my-project alice --server http://myserver:8000
+    On another device: agent-relay register my-project bob --server http://myserver:8000
+    Both agents auto-discover each other and join the same relay!
+    """
+    client = AgentRelayClient(server)
+    click.echo(f"Registering '{agent_name}' in namespace '{namespace}'...")
+
+    try:
+        if wait:
+            click.echo("Waiting for other agents to join...")
+            try:
+                result = client.wait_for_relay(namespace, agent_name, timeout=timeout)
+            except TimeoutError:
+                click.echo("Timed out waiting for other agents.", err=True)
+                raise SystemExit(1)
+        else:
+            result = client.register(namespace, agent_name)
+
+        if result["status"] == "waiting":
+            click.echo(f"Registered. Waiting for more agents in '{namespace}'.")
+            click.echo(
+                f"On another device run: agent-relay register {namespace}"
+                f" <agent-name> --server {server}"
+            )
+        else:
+            click.echo(f"Relay ready: {result['relay_id']}")
+            click.echo(f"Agents: {', '.join(result['agents'])}")
+            if result.get("api_key"):
+                save_config(server, result["relay_id"], result["api_key"], agent_name)
+                click.echo("Config saved to .agent-relay.json")
+    finally:
+        client.close()
+
+
+@main.command()
+@click.argument("namespace")
+@click.option("--server", default="http://localhost:8000", help="Relay server URL")
+def discover(namespace, server):
+    """Discover agents in a namespace."""
+    client = AgentRelayClient(server)
+    try:
+        result = client.discover(namespace)
+        click.echo(f"Namespace: {namespace}")
+        click.echo(f"Relay: {result.get('relay_id', 'none yet')}")
+        for agent in result.get("agents", []):
+            status_icon = "+" if agent["status"] == "ready" else "o"
+            click.echo(
+                f"  {status_icon} {agent['agent_name']}"
+                f" ({agent['status']}) on {agent['device_id']}"
+            )
+    finally:
+        client.close()

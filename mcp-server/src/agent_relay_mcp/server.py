@@ -221,6 +221,64 @@ def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
     return {"messages": messages, "count": len(messages)}
 
 
+@mcp.tool()
+def relay_register(namespace: str, agent_name: str) -> dict:
+    """Register this agent for cross-device discovery.
+
+    All agents using the same namespace will auto-discover each other.
+    When 2+ agents register, a relay is automatically created.
+
+    Args:
+        namespace: Shared name (e.g. project name, team name).
+            All agents with same namespace find each other.
+        agent_name: Your agent's name.
+    """
+    try:
+        resp = _client.post(
+            "/agents/register",
+            params={"namespace": namespace, "agent_name": agent_name},
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        if result["status"] in ("joined", "created"):
+            _session["relay_id"] = result["relay_id"]
+            _session["agent"] = agent_name
+            if result.get("api_key"):
+                _session["api_key"] = result["api_key"]
+
+            # Persist config for cross-session use
+            try:
+                _save_config_file(
+                    server=RELAY_URL,
+                    relay_id=result["relay_id"],
+                    api_key=result.get("api_key", ""),
+                    agent=agent_name,
+                )
+                result["config_saved"] = True
+            except OSError:
+                result["config_saved"] = False
+
+        return result
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
+def relay_discover(namespace: str) -> dict:
+    """Discover all agents in a namespace. Shows who's online and if a relay exists.
+
+    Args:
+        namespace: The namespace to search for agents in.
+    """
+    try:
+        resp = _client.get(f"/agents/discover/{namespace}")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
 def main():
     """Entry point for the MCP server."""
     mcp.run()

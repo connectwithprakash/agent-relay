@@ -1,7 +1,7 @@
 """
 Database models for Agent Relay
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -93,3 +93,23 @@ class WebhookDelivery(Base):
 
     def __repr__(self):
         return f"<WebhookDelivery {self.id} status={self.status}>"
+
+
+class AgentRegistration(Base):
+    """Cross-device agent registration for namespace-based discovery"""
+    __tablename__ = "agent_registrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    namespace = Column(String, nullable=False, index=True)
+    agent_name = Column(String, nullable=False)
+    device_id = Column(String, nullable=False)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=True)
+    status = Column(String, default="waiting")  # waiting, ready, offline
+    last_heartbeat = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    relay = relationship("Relay")
+
+    def __repr__(self):
+        return f"<AgentRegistration {self.agent_name}@{self.namespace}>"
