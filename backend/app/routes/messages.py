@@ -103,7 +103,7 @@ async def send_message(
             data=req.data,
             type=req.type,
             reply_to=req.reply_to,
-            message_type=req.type,  # Use the type field as message_type for filtering
+            # message_type synced via type column
             idempotency_key=req.idempotency_key,
         )
         message = message_repo.create(message)

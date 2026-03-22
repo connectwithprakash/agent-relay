@@ -27,7 +27,7 @@ class MessageRepository:
             .filter(Message.relay_id == relay_id)
         )
         if message_type:
-            query = query.filter(Message.message_type == message_type)
+            query = query.filter(Message.type == message_type)
         return (
             query
             .order_by(Message.created_at.asc())
@@ -43,7 +43,7 @@ class MessageRepository:
             .filter(Message.relay_id == relay_id)
         )
         if message_type:
-            query = query.filter(Message.message_type == message_type)
+            query = query.filter(Message.type == message_type)
         return query.count()
 
     def count_by_relay_ids(self, relay_ids: List[str]) -> Dict[str, int]:
