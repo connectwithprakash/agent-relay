@@ -2,9 +2,9 @@
 Webhook service - Webhook delivery and management
 """
 import asyncio
-import logging
 from typing import Optional
 import httpx
+from loguru import logger
 
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,6 @@ from ..config import settings
 from ..models import Relay, Message, Webhook, WebhookDelivery
 from ..database import SessionLocal
 
-logger = logging.getLogger("agent_relay.webhooks")
 
 # Shared httpx client with connection pooling to avoid per-request client overhead
 _http_client: Optional[httpx.AsyncClient] = None

@@ -2,9 +2,9 @@
 Message endpoints - send and history
 """
 import asyncio
-import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_agent
@@ -19,8 +19,6 @@ from ..services import PrivacyService, RelayService, WebhookService
 from ..websocket_manager import manager, get_relay_lock
 from ..rate_limit import limiter
 from .relays import get_relay_or_404, _check_and_advance_timeout
-
-logger = logging.getLogger("agent_relay.app")
 
 router = APIRouter()
 
@@ -101,8 +99,8 @@ async def send_message(
             agent_name=agent,
             content=req.content,
             data=req.data,
-            type=req.type,
-            message_type=req.type,
+            type=req.message_type if req.message_type != "text" else req.type,
+            message_type=req.message_type if req.message_type != "text" else req.type,
             reply_to=req.reply_to,
             idempotency_key=req.idempotency_key,
         )

@@ -1,12 +1,12 @@
 """
 Relay CRUD endpoints
 """
-import logging
 from datetime import datetime, timezone
 
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -18,8 +18,6 @@ from ..schemas import (
 )
 from ..services import PrivacyService, RelayService
 from ..rate_limit import limiter
-
-logger = logging.getLogger("agent_relay.app")
 
 router = APIRouter()
 

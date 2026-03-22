@@ -1,7 +1,6 @@
 """
 Relay service - Business logic for relay operations
 """
-import logging
 import random
 import secrets
 import string
@@ -12,8 +11,7 @@ from sqlalchemy.orm import Session
 from ..models import AgentToken, Relay
 from ..repositories import RelayRepository, MessageRepository, PresenceRepository
 from ..schemas import AgentPresenceSchema, CreateRelayRequest, RelayState
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class RelayService:

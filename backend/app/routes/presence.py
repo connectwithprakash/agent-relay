@@ -1,16 +1,14 @@
 """
 Presence/heartbeat endpoints for agent liveness tracking
 """
-import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..repositories import PresenceRepository
 from ..rate_limit import limiter
 from .relays import get_relay_or_404
-
-logger = logging.getLogger("agent_relay.app")
 
 router = APIRouter()
 

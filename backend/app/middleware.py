@@ -3,11 +3,9 @@ HTTP middleware for request logging and request ID tracking
 """
 import uuid
 import time
-import logging
+from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-
-logger = logging.getLogger("agent_relay.http")
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

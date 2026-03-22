@@ -1,17 +1,15 @@
 """
 WebSocket endpoint for real-time message updates
 """
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from loguru import logger
 
 from ..database import SessionLocal
 from ..models import AgentToken
 from ..repositories import RelayRepository
 from ..websocket_manager import manager
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

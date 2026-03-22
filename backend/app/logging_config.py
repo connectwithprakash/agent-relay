@@ -1,46 +1,55 @@
 """
-Structured logging configuration
-Supports JSON format for production and text format for development
+Structured logging configuration using loguru.
+Supports JSON format for production and text format for development.
+Intercepts stdlib logging so uvicorn/sqlalchemy logs go through loguru.
 """
 import logging
-import json
 import sys
+
+from loguru import logger
 
 from .config import settings
 
 
-class JSONFormatter(logging.Formatter):
-    """JSON log formatter for production environments"""
+class _InterceptHandler(logging.Handler):
+    """Route stdlib logging through loguru."""
 
-    def format(self, record):
-        log_data = {
-            "timestamp": self.formatTime(record),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
-        if hasattr(record, "request_id"):
-            log_data["request_id"] = record.request_id
-        return json.dumps(log_data)
+    def emit(self, record: logging.LogRecord) -> None:
+        # Get corresponding loguru level
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        # Find caller from where the logged message originated
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def setup_logging():
-    """Configure application logging based on settings"""
-    level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
+    """Configure application logging based on settings."""
+    # Remove default loguru handler
+    logger.remove()
 
     if settings.log_format == "json":
-        handler.setFormatter(JSONFormatter())
+        logger.add(
+            sys.stdout,
+            level=settings.log_level.upper(),
+            serialize=True,
+        )
     else:
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
-        ))
+        logger.add(
+            sys.stdout,
+            level=settings.log_level.upper(),
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> | <level>{message}</level>",
+        )
 
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.handlers = [handler]
+    # Intercept stdlib logging (uvicorn, sqlalchemy, etc.)
+    logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
 
     # Quiet noisy libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)

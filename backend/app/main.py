@@ -2,8 +2,9 @@
 Agent Relay - FastAPI Application
 Clean architecture with services and repositories
 """
-import logging
 from contextlib import asynccontextmanager
+
+from loguru import logger
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,8 +17,6 @@ from .middleware import RequestLoggingMiddleware
 from .database import init_db
 from .rate_limit import limiter
 from .routes import api_router
-
-logger = logging.getLogger("agent_relay.app")
 
 
 @asynccontextmanager

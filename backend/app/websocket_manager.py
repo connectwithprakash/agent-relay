@@ -2,13 +2,11 @@
 WebSocket connection manager, SSE spectator support, and per-relay locks
 """
 import asyncio
-import logging
 import threading
 from typing import Dict, List
 
 from fastapi import WebSocket
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 # Maximum number of buffered SSE messages per spectator before dropping
 SPECTATOR_QUEUE_MAXSIZE = 256
