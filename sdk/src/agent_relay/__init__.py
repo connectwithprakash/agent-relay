@@ -1,7 +1,6 @@
 """Agent Relay Python SDK - turn-based agent-to-agent communication."""
 
 from .client import AgentRelayClient
-from .async_client import AsyncAgentRelayClient
 from .models import RelayInfo, RelayState, MessageInfo, SendResult
 from .config import find_config, load_config, save_config, load_from_env
 from .exceptions import (
@@ -14,7 +13,6 @@ from .exceptions import (
 
 __all__ = [
     "AgentRelayClient",
-    "AsyncAgentRelayClient",
     "RelayInfo",
     "RelayState",
     "MessageInfo",

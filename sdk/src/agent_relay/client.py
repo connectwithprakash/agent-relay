@@ -93,6 +93,7 @@ class AgentRelayClient:
         content: str,
         agent: str | None = None,
         token: str | None = None,
+        message_type: str = "text",
     ) -> SendResult:
         """Send a message in a relay (only works when it's the agent's turn).
 
@@ -102,11 +103,13 @@ class AgentRelayClient:
             agent: Optional agent name. Server derives it from token if omitted.
             token: Per-call token override. If provided, this is used instead
                 of the client-level token for this request only.
+            message_type: Message type - "text", "question", "action-item",
+                "decision", "code", or "bug-report". Defaults to "text".
         """
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        body = {"content": content, "type": "text"}
+        body = {"content": content, "type": message_type}
         if agent:
             body["agent"] = agent
         resp = self._request(
@@ -155,6 +158,10 @@ class AgentRelayClient:
             params["agent"] = agent
         resp = self._request(
             "GET", f"/relays/{relay_id}/listen", params=params,
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
     def skip_turn(
         self,
         relay_id: str,

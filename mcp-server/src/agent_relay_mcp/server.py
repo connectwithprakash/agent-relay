@@ -18,9 +18,30 @@ mcp = FastMCP(
 # creating and tearing down TCP connections on every request.
 _client = httpx.Client(base_url=RELAY_URL, timeout=10.0)
 
-# Ephemeral session state populated on relay_create.
-# Allows subsequent tool calls to omit relay_id, token, and agent.
-_session: dict = {}
+# Session state populated on relay_create/relay_join_code and persisted
+# to .agent-relay.json.  On MCP restart, reload from disk so agents
+# can resume without re-joining.
+
+def _load_config_file() -> dict:
+    """Load session state from .agent-relay.json if it exists."""
+    config_path = os.path.join(os.getcwd(), ".agent-relay.json")
+    if not os.path.exists(config_path):
+        return {}
+    try:
+        with open(config_path) as f:
+            data = json.load(f)
+        default = data.get("relays", {}).get("default", {})
+        if default.get("relay_id"):
+            return {
+                "relay_id": default["relay_id"],
+                "token": default.get("token", ""),
+                "agent": default.get("my_agent", ""),
+            }
+    except (json.JSONDecodeError, KeyError, OSError):
+        pass
+    return {}
+
+_session: dict = _load_config_file()
 
 
 def _save_config_file(server: str, relay_id: str, token: str, agent: str) -> None:
