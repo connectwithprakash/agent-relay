@@ -136,6 +136,10 @@ def relay_send(
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    # If no API key, try join code from session as auth
+    join_code = _session.get("join_code", "")
+    if not api_key and join_code:
+        headers["X-Join-Code"] = join_code
     try:
         resp = _client.post(
             f"/relays/{relay_id}/messages",
@@ -242,6 +246,7 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
 
         _session["relay_id"] = result["relay_id"]
         _session["agent"] = agent_name
+        _session["join_code"] = join_code.upper()
 
         # Persist config for cross-session use
         try:

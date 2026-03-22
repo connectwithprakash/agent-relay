@@ -15,19 +15,23 @@ from .repositories import RelayRepository
 async def get_api_key(
     authorization: str = Header(None),
     x_api_key: str = Header(None, alias="X-API-Key"),
-) -> Optional[str]:
-    """Extract API key from Authorization Bearer header or X-API-Key header."""
+    x_join_code: str = Header(None, alias="X-Join-Code"),
+) -> dict:
+    """Extract API key or join code from headers."""
+    api_key = None
     if authorization and authorization.startswith("Bearer "):
-        return authorization[7:]
-    return x_api_key
+        api_key = authorization[7:]
+    elif x_api_key:
+        api_key = x_api_key
+    return {"api_key": api_key, "join_code": x_join_code}
 
 
 async def require_relay_auth(
     relay_id: str,
-    api_key: Optional[str] = Depends(get_api_key),
+    auth: dict = Depends(get_api_key),
     db: Session = Depends(get_db),
 ) -> Relay:
-    """Verify API key for relay write operations."""
+    """Verify API key or join code for relay write operations."""
     repo = RelayRepository(db)
     relay = repo.get_by_id(relay_id)
     if not relay:
@@ -37,8 +41,16 @@ async def require_relay_auth(
     if relay.api_key_hash is None:
         return relay
 
+    api_key = auth.get("api_key")
+    join_code = auth.get("join_code")
+
+    # If join code matches, allow access (knowing the code = authorized)
+    if join_code and relay.join_code and join_code.upper() == relay.join_code.upper():
+        return relay
+
+    # Otherwise require API key
     if api_key is None:
-        raise HTTPException(status_code=401, detail="API key required")
+        raise HTTPException(status_code=401, detail="API key required. Pass via Authorization header or X-Join-Code header.")
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     if key_hash != relay.api_key_hash:

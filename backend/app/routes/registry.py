@@ -367,11 +367,18 @@ async def join_by_code(
         if agent_names and relay.current_turn < len(agent_names)
         else None
     )
+    # Knowing the join code = authorized. Return the API key so joiners can send messages.
+    # Reverse the hash to... we can't. Generate a new key? No - relay only has one hash.
+    # Solution: return the raw api_key_hash as a token. Or better: skip auth for relays with join codes.
+    # Simplest fix: store the plaintext key on the relay (encrypted in prod, but for now just return it)
+    # Actually: just skip API key requirement if the request includes a valid join code header
     return {
         "relay_id": relay.id,
         "join_code": relay.join_code,
         "agent_names": agent_names,
         "current_turn": current_turn,
+        "api_key": None,  # Can't recover from hash - see note below
+        "note": "Use the API key from relay creation, or the relay creator should share it with the join code.",
     }
 
 
