@@ -451,6 +451,37 @@ def relay_discover(namespace: str) -> dict:
 
 
 @mcp.tool()
+def relay_skip_turn(relay_id: str = "", force: bool = False, token: str = "") -> dict:
+    """Skip the current agent's turn. Use when an agent appears disconnected or unresponsive.
+
+    Args:
+        relay_id: Relay ID (defaults to session relay).
+        force: Force skip even without timeout. Use when agent is unresponsive.
+        token: Optional auth token (defaults to session token).
+    """
+    relay_id = relay_id or _session.get("relay_id", "")
+    token = token or _session.get("token", "")
+
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        resp = _client.post(
+            f"/relays/{relay_id}/skip-turn",
+            params={"force": str(force).lower()},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
 def relay_search_agents(capability: str = "", namespace: str = "") -> dict:
     """Search for agents by capability. Find agents that can do what you need.
 

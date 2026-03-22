@@ -119,6 +119,34 @@ class AsyncAgentRelayClient:
         history = MessageHistory(**resp.json())
         return history.messages
 
+    async def skip_turn(
+        self,
+        relay_id: str,
+        force: bool = False,
+        token: str | None = None,
+    ) -> dict:
+        """Skip the current agent's turn.
+
+        Args:
+            relay_id: The relay ID.
+            force: Force skip even without timeout. Use when an agent is
+                disconnected or unresponsive.
+            token: Per-call token override.
+
+        Returns:
+            Dict with skipped_agent, next_turn, and forced flag.
+        """
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        resp = await self._request(
+            "POST", f"/relays/{relay_id}/skip-turn",
+            params={"force": str(force).lower()},
+            headers=headers,
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
     # -- Polling helpers --
 
     async def wait_for_turn(
