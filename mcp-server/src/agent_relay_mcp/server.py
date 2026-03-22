@@ -109,7 +109,7 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
 
 @mcp.tool()
 def relay_send(
-    relay_id: str = "", content: str = "", agent: str = "", token: str = ""
+    relay_id: str = "", message: str = "", agent: str = "", token: str = ""
 ) -> dict:
     """Send a message in a relay. Only works when it's the agent's turn.
 
@@ -118,7 +118,7 @@ def relay_send(
 
     Args:
         relay_id: The relay ID to send to (defaults to session relay).
-        content: The message text to send.
+        message: The message text to send.
         agent: The name of the agent sending the message (defaults to session agent, optional with token auth).
         token: Optional token for authentication (defaults to session token).
     """
@@ -128,7 +128,7 @@ def relay_send(
 
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
-    if not content:
+    if not message:
         return {"error": "Message content is required."}
 
     headers = {}
@@ -139,7 +139,7 @@ def relay_send(
     if not token and join_code:
         headers["X-Join-Code"] = join_code
 
-    body = {"content": content, "type": "text"}
+    body = {"content": message, "type": "text"}
     if agent:
         body["agent"] = agent
 
@@ -180,7 +180,7 @@ def relay_read(relay_id: str = "", limit: int = 20) -> dict:
 
 @mcp.tool()
 def relay_status(relay_id: str = "") -> dict:
-    """Get current relay status including whose turn it is, agent names, and message count.
+    """Get current relay status: whose turn, all agents with turn order, message count, and description.
 
     Args:
         relay_id: The relay ID to check (defaults to session relay).
@@ -192,7 +192,20 @@ def relay_status(relay_id: str = "") -> dict:
     try:
         resp = _client.get(f"/relays/{relay_id}")
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+
+        # Add turn order info for clarity
+        agents = result.get("agent_names", [])
+        current = result.get("current_turn")
+        if agents and current:
+            turn_order = []
+            for i, a in enumerate(agents):
+                marker = " ← current turn" if a == current else ""
+                you = " (you)" if a == _session.get("agent") else ""
+                turn_order.append(f"  {i+1}. {a}{you}{marker}")
+            result["turn_order"] = "\n".join(turn_order)
+
+        return result
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
 
