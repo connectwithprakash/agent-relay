@@ -336,14 +336,14 @@ class AgentRelayClient:
         """Create client from .agent-relay.json config file."""
         from .config import load_config
         config = load_config(path, relay_name)
-        return cls(base_url=config["server"], token=config.get("token") or config.get("api_key"))
+        return cls(base_url=config["server"], token=config.get("token"))
 
     @classmethod
     def from_env(cls):
         """Create client from AGENT_RELAY_* environment variables."""
         from .config import load_from_env
         config = load_from_env()
-        return cls(base_url=config["server"], token=config.get("token") or config.get("api_key"))
+        return cls(base_url=config["server"], token=config.get("token"))
 
     # -- Utility --
 

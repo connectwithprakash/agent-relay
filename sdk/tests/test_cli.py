@@ -15,7 +15,7 @@ def test_create_command(mock_save_config, mock_client_cls):
 
     mock_relay = MagicMock()
     mock_relay.relay_id = "relay-test-123"
-    mock_relay.api_key = "key-test-abc"
+    mock_relay.token = "tok-test-abc"
     mock_client.create_relay.return_value = mock_relay
     mock_save_config.return_value = "/tmp/.agent-relay.json"
 
@@ -49,13 +49,13 @@ def test_join_command(mock_save_config):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["join", "relay-xyz", "--agent", "bob", "--key", "key-123", "--server", "http://test:8000"],
+        ["join", "relay-xyz", "--agent", "bob", "--token", "tok-123", "--server", "http://test:8000"],
     )
 
     assert result.exit_code == 0
     assert "relay-xyz" in result.output
     assert "bob" in result.output
-    mock_save_config.assert_called_once_with("http://test:8000", "relay-xyz", "key-123", "bob")
+    mock_save_config.assert_called_once_with("http://test:8000", "relay-xyz", "tok-123", "bob")
 
 
 @patch("agent_relay.cli.AgentRelayClient")
@@ -65,7 +65,7 @@ def test_status_command(mock_load_config, mock_client_cls):
     mock_load_config.return_value = {
         "server": "http://test:8000",
         "relay_id": "relay-abc",
-        "api_key": "key-abc",
+        "token": "tok-abc",
         "agent": "alice",
     }
 
@@ -96,7 +96,7 @@ def test_send_command(mock_load_config, mock_client_cls):
     mock_load_config.return_value = {
         "server": "http://test:8000",
         "relay_id": "relay-abc",
-        "api_key": "key-abc",
+        "token": "tok-abc",
         "agent": "alice",
     }
 

@@ -25,7 +25,7 @@ def create(agents, server, public):
     try:
         relay = client.create_relay(list(agents), is_public=public)
 
-        config_path = save_config(server, relay.relay_id, relay.api_key, agents[0])
+        config_path = save_config(server, relay.relay_id, relay.token or "", agents[0])
 
         click.echo(f"Relay created: {relay.relay_id}")
         click.echo(f"Config saved: {config_path}")
@@ -35,7 +35,7 @@ def create(agents, server, public):
         for agent in agents[1:]:
             click.echo(
                 f"  agent-relay join {relay.relay_id} --agent {agent}"
-                f" --key {relay.api_key} --server {server}"
+                f" --token {relay.token} --server {server}"
             )
     finally:
         client.close()
@@ -44,11 +44,11 @@ def create(agents, server, public):
 @main.command()
 @click.argument("relay_id")
 @click.option("--agent", required=True, help="Your agent name")
-@click.option("--key", required=True, help="API key")
+@click.option("--token", required=True, help="Auth token")
 @click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
-def join(relay_id, agent, key, server):
+def join(relay_id, agent, token, server):
     """Join an existing relay."""
-    config_path = save_config(server, relay_id, key, agent)
+    config_path = save_config(server, relay_id, token, agent)
     click.echo(f"Joined relay: {relay_id} as {agent}")
     click.echo(f"Config saved: {config_path}")
 
@@ -107,7 +107,7 @@ def send(message, name):
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
 
-    client = AgentRelayClient(config["server"], api_key=config["api_key"])
+    client = AgentRelayClient(config["server"], token=config["token"])
     try:
         result = client.send_message(config["relay_id"], message, agent=config["agent"])
         click.echo(f"Sent! Next turn: {result.next_turn}")
@@ -156,8 +156,8 @@ def register(namespace, agent_name, server, description, capabilities, wait, tim
         else:
             click.echo(f"Relay ready: {result['relay_id']}")
             click.echo(f"Agents: {', '.join(result['agents'])}")
-            if result.get("api_key"):
-                save_config(server, result["relay_id"], result["api_key"], agent_name)
+            if result.get("token"):
+                save_config(server, result["relay_id"], result["token"], agent_name)
                 click.echo("Config saved to .agent-relay.json")
     finally:
         client.close()

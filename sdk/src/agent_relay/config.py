@@ -24,7 +24,8 @@ def find_config(start_path: Optional[str] = None) -> Optional[Path]:
 def load_config(path: Optional[str] = None, relay_name: str = "default") -> dict:
     """Load config from .agent-relay.json.
 
-    Returns dict with server, relay_id, api_key, agent.
+    Returns dict with server, relay_id, token, agent.
+    Supports backward compat: if config has 'api_key' field, treats it as 'token'.
     """
     config_path = find_config(path)
     if config_path is None or not config_path.exists():
@@ -37,10 +38,13 @@ def load_config(path: Optional[str] = None, relay_name: str = "default") -> dict
     if not relay:
         raise KeyError(f"Relay '{relay_name}' not found in config")
 
+    # Backward compat: treat legacy 'api_key' field as 'token'
+    token = relay.get("token") or relay.get("api_key")
+
     return {
         "server": data.get("server", "http://localhost:8000"),
         "relay_id": relay["relay_id"],
-        "api_key": relay.get("api_key"),
+        "token": token,
         "agent": relay.get("my_agent"),
     }
 
@@ -48,7 +52,7 @@ def load_config(path: Optional[str] = None, relay_name: str = "default") -> dict
 def save_config(
     server: str,
     relay_id: str,
-    api_key: str,
+    token: str,
     agent: str,
     relay_name: str = "default",
     path: Optional[str] = None,
@@ -65,7 +69,7 @@ def save_config(
     data["server"] = server
     data["relays"][relay_name] = {
         "relay_id": relay_id,
-        "api_key": api_key,
+        "token": token,
         "my_agent": agent,
     }
 
@@ -79,10 +83,10 @@ def load_from_env() -> dict:
     """Load config from AGENT_RELAY_* environment variables."""
     server = os.environ.get("AGENT_RELAY_SERVER", "http://localhost:8000")
     relay_id = os.environ.get("AGENT_RELAY_ID")
-    api_key = os.environ.get("AGENT_RELAY_KEY")
+    token = os.environ.get("AGENT_RELAY_TOKEN")
     agent = os.environ.get("AGENT_RELAY_AGENT")
 
     if not relay_id:
         raise EnvironmentError("AGENT_RELAY_ID environment variable not set")
 
-    return {"server": server, "relay_id": relay_id, "api_key": api_key, "agent": agent}
+    return {"server": server, "relay_id": relay_id, "token": token, "agent": agent}

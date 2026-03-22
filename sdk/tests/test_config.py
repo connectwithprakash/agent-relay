@@ -18,7 +18,7 @@ def test_save_and_load_config(tmp_path):
     config_path = save_config(
         server="http://example.com:8000",
         relay_id="relay-123",
-        api_key="key-abc",
+        token="tok-abc",
         agent="alice",
         path=str(tmp_path),
     )
@@ -27,14 +27,14 @@ def test_save_and_load_config(tmp_path):
     data = load_config(path=str(config_path), relay_name="default")
     assert data["server"] == "http://example.com:8000"
     assert data["relay_id"] == "relay-123"
-    assert data["api_key"] == "key-abc"
+    assert data["token"] == "tok-abc"
     assert data["agent"] == "alice"
 
 
 def test_save_config_updates_existing(tmp_path):
     """save_config merges into an existing config file without clobbering other relays."""
-    save_config("http://s1", "r1", "k1", "a1", relay_name="first", path=str(tmp_path))
-    save_config("http://s2", "r2", "k2", "a2", relay_name="second", path=str(tmp_path))
+    save_config("http://s1", "r1", "t1", "a1", relay_name="first", path=str(tmp_path))
+    save_config("http://s2", "r2", "t2", "a2", relay_name="second", path=str(tmp_path))
 
     with open(tmp_path / CONFIG_FILENAME) as f:
         raw = json.load(f)
@@ -48,7 +48,7 @@ def test_save_config_updates_existing(tmp_path):
 def test_find_config_walks_upward(tmp_path):
     """find_config walks parent directories until it finds .agent-relay.json."""
     # Create config in the root of tmp_path
-    save_config("http://localhost:8000", "relay-x", "key-x", "bob", path=str(tmp_path))
+    save_config("http://localhost:8000", "relay-x", "tok-x", "bob", path=str(tmp_path))
 
     # Create a nested directory structure
     nested = tmp_path / "a" / "b" / "c"
@@ -70,13 +70,13 @@ def test_load_from_env(monkeypatch):
     """load_from_env reads AGENT_RELAY_* environment variables."""
     monkeypatch.setenv("AGENT_RELAY_SERVER", "http://remote:9000")
     monkeypatch.setenv("AGENT_RELAY_ID", "relay-env")
-    monkeypatch.setenv("AGENT_RELAY_KEY", "key-env")
+    monkeypatch.setenv("AGENT_RELAY_TOKEN", "tok-env")
     monkeypatch.setenv("AGENT_RELAY_AGENT", "eve")
 
     config = load_from_env()
     assert config["server"] == "http://remote:9000"
     assert config["relay_id"] == "relay-env"
-    assert config["api_key"] == "key-env"
+    assert config["token"] == "tok-env"
     assert config["agent"] == "eve"
 
 
@@ -104,8 +104,29 @@ def test_load_missing_config_raises():
 
 def test_load_config_missing_relay_name(tmp_path):
     """load_config raises KeyError when the requested relay name is not in the file."""
-    save_config("http://localhost:8000", "r1", "k1", "a1", path=str(tmp_path))
+    save_config("http://localhost:8000", "r1", "t1", "a1", path=str(tmp_path))
     config_path = tmp_path / CONFIG_FILENAME
 
     with pytest.raises(KeyError, match="nonexistent"):
         load_config(path=str(config_path), relay_name="nonexistent")
+
+
+def test_load_config_backward_compat_api_key(tmp_path):
+    """load_config treats legacy 'api_key' field as 'token' for backward compat."""
+    config_path = tmp_path / CONFIG_FILENAME
+    data = {
+        "version": 1,
+        "server": "http://localhost:8000",
+        "relays": {
+            "default": {
+                "relay_id": "relay-legacy",
+                "api_key": "old-key-123",
+                "my_agent": "alice",
+            }
+        },
+    }
+    with open(config_path, "w") as f:
+        json.dump(data, f)
+
+    config = load_config(path=str(config_path), relay_name="default")
+    assert config["token"] == "old-key-123"

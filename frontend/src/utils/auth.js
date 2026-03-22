@@ -27,8 +27,3 @@ export function getAllStoredRelays() {
   }
   return relays;
 }
-
-// Backward compatibility aliases
-export const storeApiKey = storeToken;
-export const getApiKey = getToken;
-export const removeApiKey = removeToken;

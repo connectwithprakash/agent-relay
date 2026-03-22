@@ -132,7 +132,7 @@ class TestCreateRelay:
 
 class TestSendMessage:
     def test_send_message_includes_auth_header(self):
-        """Verify auth header is sent when api_key is provided on the call."""
+        """Verify auth header is sent when token is provided on the call."""
         captured_headers = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -142,7 +142,7 @@ class TestSendMessage:
         client = AgentRelayClient(base_url="http://test")
         client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
 
-        result = client.send_message("r1", "hi", "alice", api_key="secret-key")
+        result = client.send_message("r1", "hi", "alice", token="secret-key")
 
         assert captured_headers.get("authorization") == "Bearer secret-key"
         assert result.status == "ok"
@@ -150,14 +150,14 @@ class TestSendMessage:
         client.close()
 
     def test_send_message_uses_client_level_auth(self):
-        """Verify the client-level api_key is included by default."""
+        """Verify the client-level token is included by default."""
         captured_headers = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
             captured_headers.update(dict(request.headers))
             return _json_response(SEND_MESSAGE_RESPONSE)
 
-        client = AgentRelayClient(base_url="http://test", api_key="client-key")
+        client = AgentRelayClient(base_url="http://test", token="client-key")
         client._client = httpx.Client(
             transport=_mock_transport(handler),
             base_url="http://test",

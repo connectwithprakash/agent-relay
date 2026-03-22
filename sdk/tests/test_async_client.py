@@ -131,7 +131,7 @@ class TestSendMessage:
             transport=httpx.MockTransport(handler), base_url="http://test"
         )
 
-        result = await client.send_message("r1", "hi", "alice", api_key="secret-key")
+        result = await client.send_message("r1", "hi", "alice", token="secret-key")
         assert captured_headers.get("authorization") == "Bearer secret-key"
         assert result.status == "ok"
         assert result.next_turn == "bob"
@@ -145,7 +145,7 @@ class TestSendMessage:
             captured_headers.update(dict(request.headers))
             return _json_response(SEND_MESSAGE_RESPONSE)
 
-        client = AsyncAgentRelayClient(base_url="http://test", api_key="client-key")
+        client = AsyncAgentRelayClient(base_url="http://test", token="client-key")
         client._client = httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
             base_url="http://test",
