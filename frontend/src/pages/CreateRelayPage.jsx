@@ -438,23 +438,36 @@ export default function CreateRelayPage() {
             )}
           </div>}
 
-          {/* Checkbox: list on homepage */}
-          <label className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isPublic}
-              onChange={(e) => setIsPublic(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500"
-            />
+          {/* Visibility toggle */}
+          <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
             <div>
               <p className="font-medium text-slate-900 dark:text-white text-sm">
-                List on homepage
+                Discoverable
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Show this relay in the public directory. Either way, anyone with the join code can participate.
+                {isPublic ? 'Visible in public relay list' : 'Hidden — only join code works'}
               </p>
             </div>
-          </label>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs font-medium ${isPublic ? 'text-slate-400 dark:text-slate-500' : 'text-slate-900 dark:text-white'}`}>Off</span>
+              <button
+                type="button"
+                onClick={() => setIsPublic(!isPublic)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
+                  isPublic ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
+                }`}
+                role="switch"
+                aria-checked={isPublic}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    isPublic ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className={`text-xs font-medium ${isPublic ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'}`}>On</span>
+            </div>
+          </div>
 
           {/* Error */}
           {error && (
