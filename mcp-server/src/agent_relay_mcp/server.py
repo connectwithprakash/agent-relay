@@ -129,7 +129,10 @@ def relay_send(
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
     if not message:
-        return {"error": "Message content is required."}
+        return {"error": "Message is required. Use the 'message' parameter."}
+    # Agent is optional when token auth is available (server resolves identity)
+    if not agent and not token:
+        return {"error": "Either 'agent' or 'token' is required so the server knows who you are."}
 
     headers = {}
     if token:
@@ -194,9 +197,14 @@ def relay_status(relay_id: str = "") -> dict:
         resp.raise_for_status()
         result = resp.json()
 
+        # Indicate whether it's the caller's turn
+        current = result.get("current_turn")
+        my_agent = _session.get("agent")
+        if my_agent and current:
+            result["your_turn"] = current == my_agent
+
         # Add turn order info for clarity
         agents = result.get("agent_names", [])
-        current = result.get("current_turn")
         if agents and current:
             turn_order = []
             for i, a in enumerate(agents):
@@ -208,6 +216,62 @@ def relay_status(relay_id: str = "") -> dict:
         return result
     except httpx.HTTPStatusError as exc:
         return _handle_http_error(exc)
+
+
+@mcp.tool()
+def relay_info(relay_id: str = "") -> dict:
+    """Get relay details: description, instructions, agents, and turn order.
+    Call this after joining to understand the relay's purpose and your role.
+
+    Args:
+        relay_id: The relay ID to inspect (defaults to session relay).
+    """
+    relay_id = relay_id or _session.get("relay_id", "")
+    agent_name = _session.get("agent", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
+    result: dict = {}
+    try:
+        resp = _client.get(f"/relays/{relay_id}")
+        resp.raise_for_status()
+        status = resp.json()
+        result["relay_id"] = relay_id
+        result["description"] = status.get("description")
+        result["agent_names"] = status.get("agent_names", [])
+        result["current_turn"] = status.get("current_turn")
+        result["message_count"] = status.get("message_count")
+
+        if agent_name:
+            result["your_turn"] = status.get("current_turn") == agent_name
+
+        # Build turn order display
+        agents = status.get("agent_names", [])
+        current = status.get("current_turn")
+        turn_info = []
+        for i, a in enumerate(agents):
+            marker = " <- current" if a == current else ""
+            you = " (you)" if a == agent_name else ""
+            turn_info.append(f"{i+1}. {a}{you}{marker}")
+        result["turn_order"] = turn_info
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+    # Fetch instructions if agent identity is known
+    if agent_name:
+        try:
+            instr_resp = _client.get(
+                f"/relays/{relay_id}/instructions",
+                params={"agent": agent_name},
+            )
+            if instr_resp.status_code == 200:
+                instr = instr_resp.json()
+                if instr.get("your_instructions"):
+                    result["your_instructions"] = instr["your_instructions"]
+        except Exception:
+            pass  # Non-critical
+
+    return result
 
 
 @mcp.tool()
@@ -268,6 +332,39 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
         _session["join_code"] = join_code.upper()
         if result.get("token"):
             _session["token"] = result["token"]
+
+        # Fetch relay status and instructions so the joining agent has full context
+        try:
+            status_resp = _client.get(f"/relays/{result['relay_id']}")
+            if status_resp.status_code == 200:
+                status = status_resp.json()
+                result["description"] = status.get("description")
+                result["message_count"] = status.get("message_count")
+                result["your_turn"] = status.get("current_turn") == agent_name
+
+                # Add turn order
+                agents = result.get("agent_names", [])
+                turn_info = []
+                for i, a in enumerate(agents):
+                    marker = " <- current" if a == status.get("current_turn") else ""
+                    you = " (you)" if a == agent_name else ""
+                    turn_info.append(f"{i+1}. {a}{you}{marker}")
+                result["turn_order"] = turn_info
+        except Exception:
+            pass  # Non-critical; join already succeeded
+
+        # Try to get instructions
+        try:
+            instr_resp = _client.get(
+                f"/relays/{result['relay_id']}/instructions",
+                params={"agent": agent_name},
+            )
+            if instr_resp.status_code == 200:
+                instr = instr_resp.json()
+                if instr.get("your_instructions"):
+                    result["your_instructions"] = instr["your_instructions"]
+        except Exception:
+            pass  # Non-critical; join already succeeded
 
         # Persist config for cross-session use
         try:
