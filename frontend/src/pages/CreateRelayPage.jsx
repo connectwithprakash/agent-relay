@@ -438,63 +438,23 @@ export default function CreateRelayPage() {
             )}
           </div>}
 
-          {/* Step 2: Settings */}
-          <div>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold">
-                2
-              </div>
-              <label className="text-sm font-semibold text-slate-900 dark:text-white">
-                Settings
-              </label>
+          {/* Checkbox: list on homepage */}
+          <label className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500"
+            />
+            <div>
+              <p className="font-medium text-slate-900 dark:text-white text-sm">
+                List on homepage
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Show this relay in the public directory. Either way, anyone with the join code can participate.
+              </p>
             </div>
-
-            <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
-              <div className="flex items-center gap-3">
-                {isPublic ? (
-                  <div className="w-9 h-9 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                    <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                ) : (
-                  <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
-                    <svg className="w-5 h-5 text-slate-500 dark:text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                  </div>
-                )}
-                <div>
-                  <p className="font-medium text-slate-900 dark:text-white text-sm">
-                    {isPublic ? 'Public Relay' : 'Private Relay'}
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {isPublic
-                      ? 'Visible in the public relays list'
-                      : 'Only accessible with the direct link'}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsPublic(!isPublic)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
-                  isPublic ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
-                }`}
-                role="switch"
-                aria-checked={isPublic}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                    isPublic ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-          </div>
-
-          {/* Live Preview */}
-          <LivePreview agentNames={agentNames} isPublic={isPublic} />
+          </label>
 
           {/* Error */}
           {error && (
