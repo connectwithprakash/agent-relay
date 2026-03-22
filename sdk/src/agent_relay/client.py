@@ -129,6 +129,36 @@ class AgentRelayClient:
         history = MessageHistory(**resp.json())
         return history.messages
 
+    def listen(
+        self,
+        relay_id: str,
+        since_id: int = 0,
+        agent: str | None = None,
+        limit: int = 20,
+    ) -> dict:
+        """Non-blocking check for new messages.
+
+        Returns immediately with any messages whose id > since_id.
+
+        Args:
+            relay_id: The relay to check.
+            since_id: Only return messages after this ID (default 0 = recent).
+            agent: Agent name for your_turn calculation.
+            limit: Maximum messages to return (default 20).
+
+        Returns:
+            Dict with new_messages, your_turn, current_turn, messages,
+            last_id, agent_count, and total_messages.
+        """
+        params: dict[str, int | str] = {"since_id": since_id, "limit": limit}
+        if agent:
+            params["agent"] = agent
+        resp = self._request(
+            "GET", f"/relays/{relay_id}/listen", params=params,
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
     # -- Polling helpers --
 
     def wait_for_turn(

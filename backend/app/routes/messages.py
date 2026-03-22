@@ -13,7 +13,7 @@ from ..models import Relay, Message
 from ..repositories import MessageRepository
 from ..schemas import (
     SendMessageRequest, SendMessageResponse,
-    MessageHistory, MessageSchema,
+    MessageHistory, MessageSchema, ListenResponse,
 )
 from ..services import PrivacyService, RelayService, WebhookService
 from ..websocket_manager import manager, get_relay_lock
@@ -217,4 +217,62 @@ async def get_message_history(
             for msg in messages
         ],
         total_count=total_count
+    )
+
+
+@router.get("/relays/{relay_id}/listen", response_model=ListenResponse)
+@limiter.limit("120/minute")
+async def listen_for_messages(
+    request: Request,
+    relay_id: str,
+    since_id: int = 0,
+    agent: str = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    """Non-blocking check for new messages since a given message ID.
+
+    Returns immediately with any messages whose id > since_id.
+    Designed for agents to poll quickly between other work without blocking.
+    """
+    relay = get_relay_or_404(db, relay_id)
+
+    # Cap limit to prevent excessive queries
+    limit = min(limit, 100)
+
+    message_repo = MessageRepository(db)
+    messages = message_repo.get_since_id(relay_id, since_id, limit)
+    total_count = message_repo.count_by_relay_id(relay_id)
+
+    agent_names = relay.agent_names or []
+    current_turn = (
+        agent_names[relay.current_turn]
+        if agent_names and 0 <= relay.current_turn < len(agent_names)
+        else None
+    )
+
+    your_turn = None
+    if agent and current_turn:
+        your_turn = current_turn == agent
+
+    last_id = messages[-1].id if messages else since_id
+
+    return ListenResponse(
+        new_messages=len(messages),
+        your_turn=your_turn,
+        current_turn=current_turn,
+        messages=[
+            MessageSchema(
+                id=msg.id,
+                agent=msg.agent_name,
+                content=msg.content,
+                data=msg.data,
+                type=msg.type,
+                created_at=msg.created_at.isoformat(),
+            )
+            for msg in messages
+        ],
+        last_id=last_id,
+        agent_count=len(agent_names),
+        total_messages=total_count,
     )

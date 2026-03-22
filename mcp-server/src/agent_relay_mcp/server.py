@@ -275,6 +275,44 @@ def relay_info(relay_id: str = "") -> dict:
 
 
 @mcp.tool()
+def relay_listen(relay_id: str = "", since_id: int = 0) -> dict:
+    """Check for new messages instantly (non-blocking).
+
+    Returns immediately with any new messages since last check.
+    Use this between other work to stay updated without blocking.
+
+    Args:
+        relay_id: Relay to check (defaults to session relay).
+        since_id: Only return messages after this ID. Pass the last_id from previous call.
+    """
+    relay_id = relay_id or _session.get("relay_id", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
+    # Use tracked last_id if caller didn't provide since_id
+    if since_id == 0:
+        since_id = _session.get("last_id", 0)
+
+    agent = _session.get("agent", "")
+    params: dict = {"since_id": since_id}
+    if agent:
+        params["agent"] = agent
+
+    try:
+        resp = _client.get(f"/relays/{relay_id}/listen", params=params)
+        resp.raise_for_status()
+        result = resp.json()
+
+        # Track last_id in session so subsequent calls auto-increment
+        if result.get("last_id", 0) > 0:
+            _session["last_id"] = result["last_id"]
+
+        return result
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
 def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
     """Watch a relay for new messages. Returns any messages received within the duration.
 

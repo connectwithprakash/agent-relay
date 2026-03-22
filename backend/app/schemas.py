@@ -120,6 +120,16 @@ class MessageHistory(BaseModel):
     total_count: int
 
 
+class ListenResponse(BaseModel):
+    new_messages: int
+    your_turn: Optional[bool] = None
+    current_turn: Optional[str] = None
+    messages: list[MessageSchema]
+    last_id: int
+    agent_count: int
+    total_messages: int
+
+
 class RelayListItem(BaseModel):
     relay_id: str
     agent_names: list[str]

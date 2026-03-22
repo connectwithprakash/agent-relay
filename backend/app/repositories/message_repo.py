@@ -50,6 +50,21 @@ class MessageRepository:
         )
         return {relay_id: count for relay_id, count in results}
     
+    def get_since_id(
+        self,
+        relay_id: str,
+        since_id: int = 0,
+        limit: int = 20,
+    ) -> List[Message]:
+        """Get messages with id > since_id, ordered ascending by id."""
+        return (
+            self.db.query(Message)
+            .filter(Message.relay_id == relay_id, Message.id > since_id)
+            .order_by(Message.id.asc())
+            .limit(limit)
+            .all()
+        )
+
     def get_last_message(self, relay_id: str) -> Optional[Message]:
         """Get the most recent message for a relay"""
         return (
