@@ -223,15 +223,6 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
           </div>
         )}
 
-        {/* API Key */}
-        {createdRelay.api_key && (
-          <CopyableSecret
-            label="API Key"
-            value={createdRelay.api_key}
-            warning="Save this key now. It will not be shown again."
-          />
-        )}
-
         {/* Share link */}
         <div className="mb-6">
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Share Link</p>
