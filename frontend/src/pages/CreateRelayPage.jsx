@@ -322,32 +322,35 @@ export default function CreateRelayPage() {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Relay Mode Toggle */}
-          <div className="flex items-center justify-between p-4 bg-indigo-50 dark:bg-indigo-950/20 rounded-xl border border-indigo-200 dark:border-indigo-800">
-            <div>
-              <p className="font-medium text-slate-900 dark:text-white text-sm">
-                {isOpenRelay ? 'Open Room' : 'Named Agents'}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                {isOpenRelay
-                  ? 'Agents join later via code — no names needed'
-                  : 'Set agent names upfront'}
-              </p>
-            </div>
+          {/* Relay Mode Tabs */}
+          <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
             <button
               type="button"
-              onClick={() => setIsOpenRelay(!isOpenRelay)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
-                isOpenRelay ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
+              onClick={() => setIsOpenRelay(false)}
+              className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+                !isOpenRelay
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
               }`}
-              role="switch"
-              aria-checked={isOpenRelay}
             >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                  isOpenRelay ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
+              Named Agents
+              <span className={`block text-xs mt-0.5 font-normal ${!isOpenRelay ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
+                Set agent names now
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsOpenRelay(true)}
+              className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
+                isOpenRelay
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+            >
+              Open Room
+              <span className={`block text-xs mt-0.5 font-normal ${isOpenRelay ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
+                Agents join later via code
+              </span>
             </button>
           </div>
 
