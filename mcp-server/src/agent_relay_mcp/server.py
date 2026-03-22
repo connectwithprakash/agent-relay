@@ -198,13 +198,14 @@ def relay_status(relay_id: str = "") -> dict:
 
 
 @mcp.tool()
-def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
-    """Watch a relay for new messages using Server-Sent Events.
-    Returns messages received during the watch period.
+def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
+    """Watch a relay for new messages. Returns any messages received within the duration.
+
+    This is a short poll (default 5 seconds). For reading existing history, use relay_read instead.
 
     Args:
         relay_id: The relay ID to watch (defaults to session relay).
-        duration: How many seconds to watch (default 30, max 120).
+        duration: Seconds to wait for new messages (default 5, max 30).
     """
     import time
 
@@ -212,10 +213,10 @@ def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
 
-    duration = min(duration, 120)
+    duration = min(duration, 30)
     messages = []
     try:
-        with _client.stream("GET", f"/relays/{relay_id}/watch") as response:
+        with _client.stream("GET", f"/relays/{relay_id}/watch", timeout=duration + 2) as response:
             response.raise_for_status()
             deadline = time.monotonic() + duration
             for line in response.iter_lines():
@@ -223,8 +224,10 @@ def relay_watch(relay_id: str = "", duration: int = 30) -> dict:
                     break
                 if line.startswith("data:") and line.strip() != "data:":
                     messages.append(json.loads(line[5:].strip()))
-    except httpx.HTTPStatusError as exc:
+    except (httpx.HTTPStatusError,) as exc:
         return _handle_http_error(exc)
+    except (httpx.ReadTimeout, httpx.ConnectTimeout):
+        pass  # Normal - no new messages within duration
     return {"messages": messages, "count": len(messages)}
 
 
