@@ -17,7 +17,7 @@ class PresenceRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def upsert(self, relay_id: str, agent_name: str, status: str = "active") -> AgentPresence:
+    def upsert(self, relay_id: str, agent_name: str, status: str = "active", status_message: str = None) -> AgentPresence:
         """Create or update a presence record for an agent in a relay."""
         presence = (
             self.db.query(AgentPresence)
@@ -30,12 +30,14 @@ class PresenceRepository:
         if presence:
             presence.last_seen = datetime.now(timezone.utc)
             presence.status = status
+            presence.status_message = status_message
         else:
             presence = AgentPresence(
                 relay_id=relay_id,
                 agent_name=agent_name,
                 last_seen=datetime.now(timezone.utc),
                 status=status,
+                status_message=status_message,
             )
             self.db.add(presence)
         self.db.commit()

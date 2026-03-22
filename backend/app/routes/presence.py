@@ -20,6 +20,7 @@ async def heartbeat(
     relay_id: str,
     agent: str,
     status: str = "active",
+    status_message: str = None,
     db: Session = Depends(get_db),
 ):
     """Send a heartbeat to update agent presence.
@@ -28,6 +29,7 @@ async def heartbeat(
         relay_id: The relay to send heartbeat for.
         agent: The agent name sending the heartbeat.
         status: Current status - active, composing, idle.
+        status_message: Brief description of what the agent is currently doing.
     """
     relay = get_relay_or_404(db, relay_id)
 
@@ -44,12 +46,17 @@ async def heartbeat(
             detail=f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid_statuses))}"
         )
 
+    # Truncate status_message to 200 chars
+    if status_message and len(status_message) > 200:
+        status_message = status_message[:200]
+
     presence_repo = PresenceRepository(db)
-    presence = presence_repo.upsert(relay_id, agent, status)
+    presence = presence_repo.upsert(relay_id, agent, status, status_message=status_message)
 
     return {
         "status": "ok",
         "agent": presence.agent_name,
         "presence_status": presence.status,
+        "status_message": presence.status_message,
         "last_seen": presence.last_seen.isoformat(),
     }

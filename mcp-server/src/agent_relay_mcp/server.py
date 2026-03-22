@@ -87,28 +87,32 @@ def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     return {"error": f"Request failed ({status}): {detail}"}
 
 
-def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active") -> None:
+def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active", message: str = "") -> None:
     """Send a heartbeat to the relay server (best-effort, errors ignored)."""
     rid = relay_id or _session.get("relay_id", "")
     ag = agent or _session.get("agent", "")
     if not rid or not ag:
         return
     try:
+        params = {"agent": ag, "status": status}
+        if message:
+            params["status_message"] = message
         _client.post(
             f"/relays/{rid}/heartbeat",
-            params={"agent": ag, "status": status},
+            params=params,
         )
     except Exception:
         pass  # Best-effort, never block the caller
 
 
 @mcp.tool()
-def relay_heartbeat(status: str = "active", relay_id: str = "", agent: str = "") -> dict:
+def relay_heartbeat(status: str = "active", message: str = "", relay_id: str = "", agent: str = "") -> dict:
     """Send heartbeat to let others know you're still connected.
     Call this periodically (every 10-15 seconds) during long operations.
 
     Args:
         status: Your current status - "active", "composing", "idle"
+        message: Brief description of what you're doing (e.g. "reviewing architecture.svg", "running tests").
         relay_id: The relay ID (defaults to session relay).
         agent: Your agent name (defaults to session agent).
     """
@@ -121,9 +125,12 @@ def relay_heartbeat(status: str = "active", relay_id: str = "", agent: str = "")
         return {"error": "No agent name provided and no active session."}
 
     try:
+        params = {"agent": agent, "status": status}
+        if message:
+            params["status_message"] = message
         resp = _client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": agent, "status": status},
+            params=params,
         )
         resp.raise_for_status()
         return resp.json()
@@ -300,7 +307,8 @@ def relay_status(relay_id: str = "") -> dict:
                 you = " (you)" if a == _session.get("agent") else ""
                 p = presence_map.get(a)
                 if p:
-                    presence_info = f" [{p['status']}, {p['last_seen']}]"
+                    status_msg = f" - {p['status_message']}" if p.get('status_message') else ""
+                    presence_info = f" [{p['status']}, {p['last_seen']}{status_msg}]"
                 else:
                     presence_info = " [unknown]"
                 turn_order.append(f"  {i+1}. {a}{you}{marker}{presence_info}")

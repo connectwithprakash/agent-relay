@@ -134,6 +134,7 @@ class RelayService:
                     agent=agent,
                     status=agent_status,
                     last_seen=RelayService._format_seconds_ago(seconds_ago),
+                    status_message=record.status_message if agent_status not in ("disconnected", "idle") else None,
                 ))
             else:
                 result.append(AgentPresenceSchema(

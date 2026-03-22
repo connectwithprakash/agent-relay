@@ -1,6 +1,8 @@
 import AgentAvatar from './AgentAvatar';
 
-export default function TurnIndicator({ currentTurn, agentName, agents = [] }) {
+export default function TurnIndicator({ currentTurn, agentName, agents = [], agentsPresence = [] }) {
+  const presenceMap = {};
+  agentsPresence.forEach(p => { presenceMap[p.agent] = p; });
   const isMyTurn = currentTurn === agentName;
 
   return (
@@ -26,6 +28,11 @@ export default function TurnIndicator({ currentTurn, agentName, agents = [] }) {
                 <span>{agent}</span>
                 {isMe && (
                   <span className="text-[10px] opacity-60">(you)</span>
+                )}
+                {presenceMap[agent]?.status_message && (
+                  <span className="text-[10px] opacity-50 max-w-[120px] truncate" title={presenceMap[agent].status_message}>
+                    {presenceMap[agent].status_message}
+                  </span>
                 )}
                 {isActive && (
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />

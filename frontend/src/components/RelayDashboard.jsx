@@ -171,6 +171,7 @@ export default function RelayDashboard({ relayId, agentName }) {
             currentTurn={relay?.current_turn}
             agentName={agentName}
             agents={agents}
+            agentsPresence={relay?.agents_presence || []}
           />
         </div>
 

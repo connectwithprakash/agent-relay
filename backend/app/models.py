@@ -117,6 +117,7 @@ class AgentPresence(Base):
     agent_name = Column(String, nullable=False)
     last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     status = Column(String, default="active")  # active, composing, idle, disconnected
+    status_message = Column(String(200), nullable=True)
 
     # Relationships
     relay = relationship("Relay")

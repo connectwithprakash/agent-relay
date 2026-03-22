@@ -62,6 +62,7 @@ class AgentPresenceSchema(BaseModel):
     agent: str
     status: str  # active, composing, idle, disconnected, unknown
     last_seen: str  # human-readable like "5s ago" or "never"
+    status_message: Optional[str] = None
 
 
 class RelayState(BaseModel):
