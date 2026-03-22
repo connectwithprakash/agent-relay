@@ -86,7 +86,7 @@ class RelayState(BaseModel):
 class SendMessageRequest(BaseModel):
     content: Optional[str] = Field(default=None, max_length=65536)
     data: Optional[dict] = None
-    type: Literal["text", "structured"] = "text"
+    type: str = "text"  # text, question, action-item, decision, bug-report, code, structured
     agent: Optional[str] = None  # Auto-detected if None
     next_agent: Optional[str] = None  # Direct turn to specific agent (skip round-robin)
     reply_to: Optional[int] = None  # Message ID to reply to (for threading)
