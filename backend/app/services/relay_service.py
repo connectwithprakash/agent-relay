@@ -252,10 +252,18 @@ class RelayService:
                 if agent != current_agent:
                     turns_waited[agent] = turns_waited.get(agent, 0) + 1
 
-        # Check for starving agents
+        # Check for starving agents (exclude disconnected ones)
         max_skip = relay.max_skip_count or 3
+        # Get presence to filter out disconnected agents
+        disconnected = set()
+        try:
+            presence_list = RelayService.get_presence_for_relay(db, relay)
+            disconnected = {p.agent for p in presence_list if p.status == "disconnected"}
+        except Exception:
+            pass
+
         starving = [(a, cnt) for a, cnt in turns_waited.items()
-                    if cnt >= max_skip and a != current_agent and a in agent_names]
+                    if cnt >= max_skip and a != current_agent and a in agent_names and a not in disconnected]
 
         if starving:
             starving.sort(key=lambda x: -x[1])
