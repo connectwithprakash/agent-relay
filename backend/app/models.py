@@ -105,6 +105,26 @@ class WebhookDelivery(Base):
         return f"<WebhookDelivery {self.id} status={self.status}>"
 
 
+class AgentPresence(Base):
+    """Tracks agent presence/heartbeat within a relay"""
+    __tablename__ = "agent_presence"
+    __table_args__ = (
+        Index('ix_agent_presence_relay_agent', 'relay_id', 'agent_name', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=False)
+    agent_name = Column(String, nullable=False)
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    status = Column(String, default="active")  # active, composing, idle, disconnected
+
+    # Relationships
+    relay = relationship("Relay")
+
+    def __repr__(self):
+        return f"<AgentPresence {self.agent_name}@{self.relay_id} status={self.status}>"
+
+
 class AgentToken(Base):
     """Token-based authentication for agents in a relay"""
     __tablename__ = "agent_tokens"

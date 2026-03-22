@@ -66,6 +66,50 @@ def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     return {"error": f"Request failed ({status}): {detail}"}
 
 
+def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active") -> None:
+    """Send a heartbeat to the relay server (best-effort, errors ignored)."""
+    rid = relay_id or _session.get("relay_id", "")
+    ag = agent or _session.get("agent", "")
+    if not rid or not ag:
+        return
+    try:
+        _client.post(
+            f"/relays/{rid}/heartbeat",
+            params={"agent": ag, "status": status},
+        )
+    except Exception:
+        pass  # Best-effort, never block the caller
+
+
+@mcp.tool()
+def relay_heartbeat(status: str = "active", relay_id: str = "", agent: str = "") -> dict:
+    """Send heartbeat to let others know you're still connected.
+    Call this periodically (every 10-15 seconds) during long operations.
+
+    Args:
+        status: Your current status - "active", "composing", "idle"
+        relay_id: The relay ID (defaults to session relay).
+        agent: Your agent name (defaults to session agent).
+    """
+    relay_id = relay_id or _session.get("relay_id", "")
+    agent = agent or _session.get("agent", "")
+
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session. Use relay_create first."}
+    if not agent:
+        return {"error": "No agent name provided and no active session."}
+
+    try:
+        resp = _client.post(
+            f"/relays/{relay_id}/heartbeat",
+            params={"agent": agent, "status": status},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
 @mcp.tool()
 def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
     """Create a new relay for turn-based agent communication.
@@ -149,6 +193,9 @@ def relay_send(
     if not token and join_code:
         headers["X-Join-Code"] = join_code
 
+    # Auto-send heartbeat before sending a message
+    _send_heartbeat(relay_id, agent, "active")
+
     body: dict = {"content": message, "type": "text", "message_type": type}
     if agent:
         body["agent"] = agent
@@ -197,7 +244,7 @@ def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
 
 @mcp.tool()
 def relay_status(relay_id: str = "") -> dict:
-    """Get current relay status: whose turn, all agents with turn order, message count, and description.
+    """Get current relay status: whose turn, all agents with turn order, presence info, message count, and description.
 
     Args:
         relay_id: The relay ID to check (defaults to session relay).
@@ -205,6 +252,9 @@ def relay_status(relay_id: str = "") -> dict:
     relay_id = relay_id or _session.get("relay_id", "")
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
+
+    # Auto-send heartbeat when checking status
+    _send_heartbeat(relay_id)
 
     try:
         resp = _client.get(f"/relays/{relay_id}")
@@ -217,14 +267,22 @@ def relay_status(relay_id: str = "") -> dict:
         if my_agent and current:
             result["your_turn"] = current == my_agent
 
-        # Add turn order info for clarity
+        # Add turn order info with presence status for clarity
         agents = result.get("agent_names", [])
+        presence_list = result.get("agents_presence", [])
+        presence_map = {p["agent"]: p for p in presence_list} if presence_list else {}
+
         if agents and current:
             turn_order = []
             for i, a in enumerate(agents):
-                marker = " ← current turn" if a == current else ""
+                marker = " <- current turn" if a == current else ""
                 you = " (you)" if a == _session.get("agent") else ""
-                turn_order.append(f"  {i+1}. {a}{you}{marker}")
+                p = presence_map.get(a)
+                if p:
+                    presence_info = f" [{p['status']}, {p['last_seen']}]"
+                else:
+                    presence_info = " [unknown]"
+                turn_order.append(f"  {i+1}. {a}{you}{marker}{presence_info}")
             result["turn_order"] = "\n".join(turn_order)
 
         return result

@@ -183,6 +183,32 @@ class AgentRelayClient:
         _raise_for_status(resp)
         return resp.json()
 
+    # -- Presence operations --
+
+    def heartbeat(
+        self,
+        relay_id: str,
+        agent: str,
+        status: str = "active",
+    ) -> dict:
+        """Send a heartbeat to update agent presence.
+
+        Args:
+            relay_id: The relay to send heartbeat for.
+            agent: The agent name sending the heartbeat.
+            status: Current status - "active", "composing", "idle".
+
+        Returns:
+            Dict with status confirmation and last_seen timestamp.
+        """
+        resp = self._request(
+            "POST",
+            f"/relays/{relay_id}/heartbeat",
+            params={"agent": agent, "status": status},
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
     # -- Polling helpers --
 
     def wait_for_turn(

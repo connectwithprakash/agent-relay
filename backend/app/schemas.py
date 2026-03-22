@@ -58,6 +58,12 @@ class CreateRelayResponse(BaseModel):
     status: str = "active"
 
 
+class AgentPresenceSchema(BaseModel):
+    agent: str
+    status: str  # active, composing, idle, disconnected, unknown
+    last_seen: str  # human-readable like "5s ago" or "never"
+
+
 class RelayState(BaseModel):
     relay_id: str
     current_turn: Optional[str] = None
@@ -73,6 +79,7 @@ class RelayState(BaseModel):
     join_code: Optional[str] = None
     max_agents: int = 10
     min_agents: int = 2
+    agents_presence: list[AgentPresenceSchema] = []
 
 
 # Message Schemas

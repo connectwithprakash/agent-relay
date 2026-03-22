@@ -9,8 +9,8 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
 from ..models import AgentToken, Relay
-from ..repositories import RelayRepository, MessageRepository
-from ..schemas import CreateRelayRequest, RelayState
+from ..repositories import RelayRepository, MessageRepository, PresenceRepository
+from ..schemas import AgentPresenceSchema, CreateRelayRequest, RelayState
 
 
 class RelayService:
@@ -94,8 +94,57 @@ class RelayService:
         return relay, token_str
 
     @staticmethod
+    def _format_seconds_ago(seconds: float) -> str:
+        """Format seconds into a human-readable 'ago' string."""
+        if seconds < 60:
+            return f"{int(seconds)}s ago"
+        elif seconds < 3600:
+            return f"{int(seconds / 60)}m ago"
+        else:
+            return f"{int(seconds / 3600)}h ago"
+
+    @staticmethod
+    def get_presence_for_relay(db: Session, relay: Relay) -> list[AgentPresenceSchema]:
+        """Get presence info for all agents in a relay."""
+        agent_names = relay.agent_names or []
+        if not agent_names:
+            return []
+
+        presence_repo = PresenceRepository(db)
+        presence_records = presence_repo.get_for_relay(relay.id)
+        presence_map = {p.agent_name: p for p in presence_records}
+
+        now = datetime.now(timezone.utc)
+        result = []
+        for agent in agent_names:
+            record = presence_map.get(agent)
+            if record:
+                last_seen = record.last_seen
+                if last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+                seconds_ago = (now - last_seen).total_seconds()
+                if seconds_ago > 120:
+                    agent_status = "disconnected"
+                elif seconds_ago > 60:
+                    agent_status = "idle"
+                else:
+                    agent_status = record.status
+                result.append(AgentPresenceSchema(
+                    agent=agent,
+                    status=agent_status,
+                    last_seen=RelayService._format_seconds_ago(seconds_ago),
+                ))
+            else:
+                result.append(AgentPresenceSchema(
+                    agent=agent,
+                    status="unknown",
+                    last_seen="never",
+                ))
+        return result
+
+    @staticmethod
     def get_relay_state(db: Session, relay: Relay) -> RelayState:
-        """Get current relay state with message info"""
+        """Get current relay state with message info and presence"""
         message_repo = MessageRepository(db)
         message_count = message_repo.count_by_relay_id(relay.id)
         last_message = message_repo.get_last_message(relay.id)
@@ -107,6 +156,17 @@ class RelayService:
             else None
         )
         status = "open" if not agent_names else "active"
+
+        # Auto-skip disconnected agent if they hold the current turn
+        presence_list = RelayService.get_presence_for_relay(db, relay)
+        if current_turn:
+            current_presence = next(
+                (p for p in presence_list if p.agent == current_turn), None
+            )
+            if current_presence and current_presence.status == "disconnected":
+                current_turn = RelayService.advance_turn(db, relay)
+                # Refresh presence after turn advance
+                presence_list = RelayService.get_presence_for_relay(db, relay)
 
         return RelayState(
             relay_id=relay.id,
@@ -123,6 +183,7 @@ class RelayService:
             join_code=relay.join_code,
             max_agents=relay.max_agents,
             min_agents=relay.min_agents,
+            agents_presence=presence_list,
         )
 
     @staticmethod
