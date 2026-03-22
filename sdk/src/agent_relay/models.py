@@ -12,7 +12,7 @@ class RelayInfo(BaseModel):
     relay_id: str
     agent_names: list[str]
     current_turn: Optional[str] = None
-    api_key: Optional[str] = None
+    token: Optional[str] = None
     join_code: Optional[str] = None
     description: Optional[str] = None
     status: str = "active"

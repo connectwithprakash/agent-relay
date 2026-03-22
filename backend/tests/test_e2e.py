@@ -22,15 +22,15 @@ class TestRelayLifecycle:
         assert r.status_code == 200
         data = r.json()
         relay_id = data["relay_id"]
-        api_key = data["api_key"]
+        token = data["token"]
         join_code = data.get("join_code")
 
         assert relay_id
-        assert api_key
+        assert token
         assert join_code is not None
         assert len(join_code) == 6
 
-        headers = {"Authorization": f"Bearer {api_key}"}
+        headers = {"Authorization": f"Bearer {token}"}
 
         # 2. Verify initial relay state
         r = client.get(f"/relays/{relay_id}")
@@ -40,16 +40,28 @@ class TestRelayLifecycle:
         assert state["message_count"] == 0
         assert state["agent_names"] == ["alice", "bob", "charlie"]
 
-        # 3. Send messages in turn order: alice -> bob -> charlie
+        # 3. Get tokens for each agent via join code
+        bob_resp = client.post(f"/relays/join/{join_code}?agent_name=bob")
+        bob_token = bob_resp.json()["token"]
+        charlie_resp = client.post(f"/relays/join/{join_code}?agent_name=charlie")
+        charlie_token = charlie_resp.json()["token"]
+
+        agent_tokens = {
+            "alice": token,
+            "bob": bob_token,
+            "charlie": charlie_token,
+        }
+
+        # 4. Send messages in turn order: alice -> bob -> charlie
         for agent, msg in [("alice", "Hello!"), ("bob", "Hi!"), ("charlie", "Hey!")]:
             r = client.post(
                 f"/relays/{relay_id}/messages",
                 json={"content": msg, "agent": agent},
-                headers=headers,
+                headers={"Authorization": f"Bearer {agent_tokens[agent]}"},
             )
             assert r.status_code == 200, f"{agent} failed: {r.text}"
 
-        # 4. Verify history
+        # 5. Verify history
         r = client.get(f"/relays/{relay_id}/history")
         assert r.status_code == 200
         history = r.json()
@@ -59,7 +71,7 @@ class TestRelayLifecycle:
         assert history["messages"][2]["content"] == "Hey!"
         assert history["messages"][2]["agent"] == "charlie"
 
-        # 5. Verify turn wrapped back to alice
+        # 6. Verify turn wrapped back to alice
         r = client.get(f"/relays/{relay_id}")
         assert r.json()["current_turn"] == "alice"
 
@@ -70,7 +82,7 @@ class TestRelayLifecycle:
             json={"agent_names": ["x", "y"], "is_public": True},
         )
         data = r.json()
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         r = client.post(
             f"/relays/{data['relay_id']}/messages",
@@ -92,7 +104,7 @@ class TestRelayLifecycle:
         )
         data = r.json()
         relay_id = data["relay_id"]
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         payload = {"key": "value", "nested": {"a": 1}}
         r = client.post(
@@ -112,51 +124,56 @@ class TestRelayLifecycle:
 # Flow 2: Authentication
 # ---------------------------------------------------------------------------
 class TestAuthFlow:
-    """Verify API key enforcement on write endpoints."""
+    """Verify token enforcement on write endpoints."""
 
     def test_full_auth_lifecycle(self, client):
         r = client.post("/relays", json={"agent_names": ["a", "b"]})
         assert r.status_code == 200
         relay_id = r.json()["relay_id"]
-        api_key = r.json()["api_key"]
+        token = r.json()["token"]
+        join_code = r.json()["join_code"]
 
-        # Good key works (Bearer header)
+        # Good token works (Bearer header)
         r = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "test", "agent": "a"},
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 200
 
-        # Good key works (X-API-Key header)
+        # Get token for agent b
+        b_resp = client.post(f"/relays/join/{join_code}?agent_name=b")
+        b_token = b_resp.json()["token"]
+
+        # b's token works for b's turn
         r = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "test2", "agent": "b"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {b_token}"},
         )
         assert r.status_code == 200
 
-        # No key fails
+        # No token fails
         r = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "test", "agent": "a"},
         )
         assert r.status_code == 401
 
-        # Wrong key fails
+        # Wrong token fails
         r = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "test", "agent": "a"},
-            headers={"Authorization": "Bearer wrong-key"},
+            headers={"Authorization": "Bearer wrong-token"},
         )
         assert r.status_code == 401
 
     def test_auth_required_for_webhooks(self, client):
-        """Webhook registration also requires a valid API key."""
+        """Webhook registration also requires a valid token."""
         r = client.post("/relays", json={"agent_names": ["a", "b"]})
         relay_id = r.json()["relay_id"]
 
-        # No key -> 401
+        # No token -> 401
         r = client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "https://example.com/hook", "agent": "a"},
@@ -183,6 +200,7 @@ class TestJoinCodeFlow:
         r = client.post(f"/relays/join/{join_code}?agent_name=joiner")
         assert r.status_code == 200
         assert "joiner" in r.json()["agent_names"]
+        assert r.json()["token"] is not None
 
         # Verify via relay state
         r = client.get(f"/relays/{relay_id}")
@@ -244,6 +262,7 @@ class TestDiscoveryFlow:
         assert r2.status_code == 200
         assert r2.json()["status"] == "created"
         assert r2.json()["relay_id"]
+        assert r2.json()["token"] is not None
 
         # Discover shows both agents
         r = client.get("/agents/discover/e2e-ns")
@@ -274,6 +293,7 @@ class TestDiscoveryFlow:
         assert r3.json()["status"] == "joined"
         assert r3.json()["relay_id"] == relay_id
         assert "third" in r3.json()["agents"]
+        assert r3.json()["token"] is not None
 
     def test_discover_empty_namespace(self, client):
         r = client.get("/agents/discover/nonexistent-ns")
@@ -318,13 +338,17 @@ class TestTurnEnforcement:
         )
         data = r.json()
         relay_id = data["relay_id"]
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        join_code = data["join_code"]
+
+        # Get bob's token
+        bob_resp = client.post(f"/relays/join/{join_code}?agent_name=bob")
+        bob_token = bob_resp.json()["token"]
 
         # It is alice's turn; bob tries to send
         r = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "out of turn", "agent": "bob"},
-            headers=headers,
+            headers={"Authorization": f"Bearer {bob_token}"},
         )
         assert r.status_code == 400
 
@@ -336,7 +360,13 @@ class TestTurnEnforcement:
         )
         data = r.json()
         relay_id = data["relay_id"]
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        join_code = data["join_code"]
+
+        # Get tokens for all agents
+        alice_token = data["token"]
+        bob_token = client.post(f"/relays/join/{join_code}?agent_name=bob").json()["token"]
+        charlie_token = client.post(f"/relays/join/{join_code}?agent_name=charlie").json()["token"]
+        tokens = {"alice": alice_token, "bob": bob_token, "charlie": charlie_token}
 
         turn_order = ["alice", "bob", "charlie", "alice", "bob"]
         for agent in turn_order:
@@ -346,7 +376,7 @@ class TestTurnEnforcement:
             r = client.post(
                 f"/relays/{relay_id}/messages",
                 json={"content": f"msg from {agent}", "agent": agent},
-                headers=headers,
+                headers={"Authorization": f"Bearer {tokens[agent]}"},
             )
             assert r.status_code == 200
 
@@ -356,14 +386,18 @@ class TestTurnEnforcement:
             json={"agent_names": ["alice", "bob"], "is_public": True},
         )
         data = r.json()
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
+        # Token belongs to alice, but trying to send as eve (unknown agent)
         r = client.post(
             f"/relays/{data['relay_id']}/messages",
             json={"content": "nope", "agent": "eve"},
             headers=headers,
         )
-        assert r.status_code == 400
+        # The token agent (alice) is used since the agent from token overrides request body
+        # But token agent is alice, not eve, so it should succeed as alice
+        # Actually the token agent_name overrides, so it will try as "alice" not "eve"
+        assert r.status_code == 200  # alice's turn, token says alice
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +455,7 @@ class TestValidation:
             json={"agent_names": ["a", "b"], "is_public": True},
         )
         data = r.json()
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         oversized = "x" * 65537
         r = client.post(
@@ -438,7 +472,7 @@ class TestValidation:
             json={"agent_names": ["a", "b"], "is_public": True},
         )
         data = r.json()
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         # Build a dict that serializes to > 64KB
         big_data = {"payload": "x" * 70000}
@@ -592,7 +626,7 @@ class TestWebhookFlow:
         )
         data = r.json()
         relay_id = data["relay_id"]
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         # Register webhook
         r = client.post(
@@ -617,7 +651,7 @@ class TestWebhookFlow:
             json={"agent_names": ["wh_x", "wh_y"], "is_public": True},
         )
         data = r.json()
-        headers = {"Authorization": f"Bearer {data['api_key']}"}
+        headers = {"Authorization": f"Bearer {data['token']}"}
 
         r = client.post(
             f"/relays/{data['relay_id']}/webhooks",

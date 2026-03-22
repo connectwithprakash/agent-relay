@@ -19,11 +19,11 @@ mcp = FastMCP(
 _client = httpx.Client(base_url=RELAY_URL, timeout=10.0)
 
 # Ephemeral session state populated on relay_create.
-# Allows subsequent tool calls to omit relay_id, api_key, and agent.
+# Allows subsequent tool calls to omit relay_id, token, and agent.
 _session: dict = {}
 
 
-def _save_config_file(server: str, relay_id: str, api_key: str, agent: str) -> None:
+def _save_config_file(server: str, relay_id: str, token: str, agent: str) -> None:
     """Write .agent-relay.json to the current working directory."""
     config_path = os.path.join(os.getcwd(), ".agent-relay.json")
 
@@ -36,7 +36,7 @@ def _save_config_file(server: str, relay_id: str, api_key: str, agent: str) -> N
     data["server"] = server
     data["relays"]["default"] = {
         "relay_id": relay_id,
-        "api_key": api_key,
+        "token": token,
         "my_agent": agent,
     }
 
@@ -58,7 +58,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     if status == 400:
         return {"error": f"Bad request: {detail}"}
     if status == 401 or status == 403:
-        return {"error": "Authentication failed. Provide a valid api_key."}
+        return {"error": "Authentication failed. Provide a valid token or join the relay first."}
     if status == 404:
         return {"error": "Relay not found. Check the relay_id."}
     if status == 429:
@@ -87,7 +87,7 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
 
         # Auto-populate session state so subsequent calls can omit args.
         _session["relay_id"] = result.get("relay_id")
-        _session["api_key"] = result.get("api_key")
+        _session["token"] = result.get("token")
         _session["agent"] = agent_names[0] if agent_names else None
 
         # Persist to .agent-relay.json for cross-session discovery.
@@ -95,7 +95,7 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
             _save_config_file(
                 server=RELAY_URL,
                 relay_id=_session["relay_id"],
-                api_key=_session.get("api_key", ""),
+                token=_session.get("token", ""),
                 agent=_session.get("agent", ""),
             )
             result["config_saved"] = True
@@ -109,7 +109,7 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
 
 @mcp.tool()
 def relay_send(
-    relay_id: str = "", content: str = "", agent: str = "", api_key: str = ""
+    relay_id: str = "", content: str = "", agent: str = "", token: str = ""
 ) -> dict:
     """Send a message in a relay. Only works when it's the agent's turn.
 
@@ -119,31 +119,34 @@ def relay_send(
     Args:
         relay_id: The relay ID to send to (defaults to session relay).
         content: The message text to send.
-        agent: The name of the agent sending the message (defaults to session agent).
-        api_key: Optional API key for authentication (defaults to session key).
+        agent: The name of the agent sending the message (defaults to session agent, optional with token auth).
+        token: Optional token for authentication (defaults to session token).
     """
     relay_id = relay_id or _session.get("relay_id", "")
     agent = agent or _session.get("agent", "")
-    api_key = api_key or _session.get("api_key", "")
+    token = token or _session.get("token", "")
 
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
     if not content:
         return {"error": "Message content is required."}
-    if not agent:
-        return {"error": "No agent name provided and no active session."}
 
     headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    # If no API key, try join code from session as auth
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    # If no token, try join code from session as fallback
     join_code = _session.get("join_code", "")
-    if not api_key and join_code:
+    if not token and join_code:
         headers["X-Join-Code"] = join_code
+
+    body = {"content": content, "type": "text"}
+    if agent:
+        body["agent"] = agent
+
     try:
         resp = _client.post(
             f"/relays/{relay_id}/messages",
-            json={"content": content, "type": "text", "agent": agent},
+            json=body,
             headers=headers,
         )
         resp.raise_for_status()
@@ -247,13 +250,15 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
         _session["relay_id"] = result["relay_id"]
         _session["agent"] = agent_name
         _session["join_code"] = join_code.upper()
+        if result.get("token"):
+            _session["token"] = result["token"]
 
         # Persist config for cross-session use
         try:
             _save_config_file(
                 server=RELAY_URL,
                 relay_id=result["relay_id"],
-                api_key="",
+                token=result.get("token", ""),
                 agent=agent_name,
             )
             result["config_saved"] = True
@@ -297,15 +302,15 @@ def relay_register(
         if result["status"] in ("joined", "created"):
             _session["relay_id"] = result["relay_id"]
             _session["agent"] = agent_name
-            if result.get("api_key"):
-                _session["api_key"] = result["api_key"]
+            if result.get("token"):
+                _session["token"] = result["token"]
 
             # Persist config for cross-session use
             try:
                 _save_config_file(
                     server=RELAY_URL,
                     relay_id=result["relay_id"],
-                    api_key=result.get("api_key", ""),
+                    token=result.get("token", ""),
                     agent=agent_name,
                 )
                 result["config_saved"] = True

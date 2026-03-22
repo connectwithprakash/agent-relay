@@ -53,12 +53,12 @@ def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
 @limiter.limit("5/minute")
 async def create_relay(request: Request, req: CreateRelayRequest, db: Session = Depends(get_db)):
     """Create a new relay"""
-    relay, api_key = RelayService.create_relay(db, req)
+    relay, token = RelayService.create_relay(db, req)
     return CreateRelayResponse(
         relay_id=relay.id,
         agent_names=relay.agent_names,
         current_turn=relay.agent_names[0] if relay.agent_names else None,
-        api_key=api_key,
+        token=token,
         join_code=relay.join_code,
         description=relay.description,
         status="open" if not relay.agent_names else "active",

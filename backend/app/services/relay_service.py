@@ -1,7 +1,6 @@
 """
 Relay service - Business logic for relay operations
 """
-import hashlib
 import random
 import secrets
 import string
@@ -9,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
-from ..models import Relay
+from ..models import AgentToken, Relay
 from ..repositories import RelayRepository, MessageRepository
 from ..schemas import CreateRelayRequest, RelayState
 
@@ -29,15 +28,37 @@ class RelayService:
         return ''.join(random.choices(chars, k=6))
 
     @staticmethod
+    def generate_token() -> str:
+        """Generate a secure agent token."""
+        return secrets.token_urlsafe(32)
+
+    @staticmethod
+    def create_agent_token(
+        db: Session,
+        relay_id: str,
+        agent_name: str,
+        is_creator: bool = False,
+    ) -> str:
+        """Create and store an agent token. Returns the plaintext token."""
+        token_str = RelayService.generate_token()
+        agent_token = AgentToken(
+            token=token_str,
+            relay_id=relay_id,
+            agent_name=agent_name,
+            is_creator=is_creator,
+        )
+        db.add(agent_token)
+        db.flush()
+        return token_str
+
+    @staticmethod
     def create_relay(db: Session, request: CreateRelayRequest) -> Tuple[Relay, str]:
-        """Create a new relay with an API key.
+        """Create a new relay with a creator token.
 
         Returns:
-            Tuple of (relay, plaintext_api_key)
+            Tuple of (relay, plaintext_token)
         """
         relay_id = RelayService.generate_relay_id()
-        api_key = secrets.token_urlsafe(32)
-        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         join_code = RelayService.generate_join_code()
 
         agent_names = request.agent_names or []
@@ -50,7 +71,6 @@ class RelayService:
             current_turn=0,
             is_public=request.is_public,
             owner_id=request.owner_id,
-            api_key_hash=api_key_hash,
             join_code=join_code,
             turn_timeout=request.turn_timeout,
             turn_started_at=datetime.now(timezone.utc) if not is_open else None,
@@ -64,23 +84,22 @@ class RelayService:
         repo = RelayRepository(db)
         relay = repo.create(relay)
 
-        return relay, api_key
+        # Generate creator token
+        creator_name = agent_names[0] if agent_names else "creator"
+        token_str = RelayService.create_agent_token(
+            db, relay_id, creator_name, is_creator=True
+        )
+        db.flush()
 
-    @staticmethod
-    def verify_api_key(relay: Relay, provided_key: str) -> bool:
-        """Verify that a provided API key matches the relay's stored hash."""
-        if relay.api_key_hash is None:
-            return True
-        key_hash = hashlib.sha256(provided_key.encode()).hexdigest()
-        return key_hash == relay.api_key_hash
-    
+        return relay, token_str
+
     @staticmethod
     def get_relay_state(db: Session, relay: Relay) -> RelayState:
         """Get current relay state with message info"""
         message_repo = MessageRepository(db)
         message_count = message_repo.count_by_relay_id(relay.id)
         last_message = message_repo.get_last_message(relay.id)
-        
+
         agent_names = relay.agent_names or []
         current_turn = (
             agent_names[relay.current_turn]
@@ -105,7 +124,7 @@ class RelayService:
             max_agents=relay.max_agents,
             min_agents=relay.min_agents,
         )
-    
+
     @staticmethod
     def validate_agent(relay: Relay, agent: Optional[str]) -> Tuple[str, int]:
         """
@@ -128,7 +147,7 @@ class RelayService:
             raise ValueError(f"Unknown agent '{agent}'")
 
         return agent, agent_names.index(agent)
-    
+
     @staticmethod
     def validate_turn(relay: Relay, agent_index: int) -> None:
         """
@@ -147,7 +166,7 @@ class RelayService:
             raise ValueError(
                 f"Not turn. Current turn: {current}"
             )
-    
+
     @staticmethod
     def advance_turn(db: Session, relay: Relay, next_agent: str = None) -> str:
         """Advance turn with optional directed turn and starvation prevention.

@@ -40,7 +40,7 @@ class TestRegisterAgent:
         data = resp2.json()
         assert data["status"] == "created"
         assert "relay_id" in data
-        assert "api_key" in data
+        assert "token" in data
         assert set(data["agents"]) == {"alice", "bob"}
         assert data["namespace"] == "test-project"
 

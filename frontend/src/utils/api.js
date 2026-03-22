@@ -1,6 +1,15 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 /**
+ * Build auth headers for a relay using its stored token
+ */
+const authHeaders = (relayId) => {
+  const { getToken } = require('./auth.js');
+  const token = getToken(relayId);
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+};
+
+/**
  * Get relay state
  */
 export const getRelay = async (relayId, ownerId = null) => {
@@ -72,20 +81,23 @@ export const joinByCode = async (joinCode, agentName) => {
 /**
  * Send a message to a relay
  */
-export const sendMessage = async (relayId, content, agent, apiKey = null) => {
+export const sendMessage = async (relayId, content, agent = null, token = null) => {
   const headers = { 'Content-Type': 'application/json' };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   } else {
     // Try to get from localStorage
-    const { getApiKey } = await import('./auth.js');
-    const storedKey = getApiKey(relayId);
-    if (storedKey) headers['Authorization'] = `Bearer ${storedKey}`;
+    const { getToken } = await import('./auth.js');
+    const storedToken = getToken(relayId);
+    if (storedToken) headers['Authorization'] = `Bearer ${storedToken}`;
   }
+  const body = { content, type: 'text' };
+  // Agent name comes from token on the server side, but include if provided for fallback
+  if (agent) body.agent = agent;
   const response = await fetch(`${API_BASE_URL}/relays/${relayId}/messages`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ content, type: 'text', agent }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`Failed to send message: ${response.statusText}`);
   return await response.json();
@@ -127,9 +139,11 @@ export const listPublicRelays = async (limit = 20, offset = 0) => {
 /**
  * Create WebSocket connection for real-time updates
  */
-export const connectWebSocket = (relayId, agent, onMessage) => {
+export const connectWebSocket = (relayId, agent, onMessage, token = null) => {
   const wsUrl = API_BASE_URL.replace('https://', 'wss://').replace('http://', 'ws://');
-  const ws = new WebSocket(`${wsUrl}/relays/${relayId}/ws?agent=${agent}`);
+  let url = `${wsUrl}/relays/${relayId}/ws?agent=${agent}`;
+  if (token) url += `&token=${encodeURIComponent(token)}`;
+  const ws = new WebSocket(url);
 
   ws.onopen = () => console.log(`WebSocket connected for agent: ${agent}`);
   ws.onmessage = (event) => {

@@ -82,30 +82,30 @@ class TestWebhookEndpointValidation:
         monkeypatch.setattr(url_validator_settings, "environment", "production")
 
     def test_register_webhook_rejects_private_url(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         resp = client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "http://127.0.0.1:9999/callback", "agent": "alice"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 400
         assert "Invalid webhook URL" in resp.json()["detail"]
 
     def test_register_webhook_rejects_localhost(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         resp = client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "http://localhost/callback", "agent": "alice"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 400
 
     def test_register_webhook_accepts_public_url(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         resp = client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "https://hooks.example.com/relay", "agent": "alice"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
         assert resp.json()["url"] == "https://hooks.example.com/relay"
@@ -118,40 +118,40 @@ class TestWebhookEndpointValidation:
 class TestMessageSizeLimits:
 
     def test_content_within_limit(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         resp = client.post(
             f"/relays/{relay_id}/messages",
             json={"agent": "alice", "content": "hello"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
 
     def test_content_exceeds_max_length(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         huge_content = "x" * 70000
         resp = client.post(
             f"/relays/{relay_id}/messages",
             json={"agent": "alice", "content": huge_content},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 422  # Validation error
 
     def test_data_within_limit(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         resp = client.post(
             f"/relays/{relay_id}/messages",
             json={"agent": "alice", "type": "structured", "data": {"key": "value"}},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200
 
     def test_data_exceeds_max_size(self, client, relay_with_key):
-        relay_id, api_key = relay_with_key
+        relay_id, token = relay_with_key
         huge_data = {"payload": "x" * 70000}
         resp = client.post(
             f"/relays/{relay_id}/messages",
             json={"agent": "alice", "type": "structured", "data": huge_data},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 422
 
@@ -218,11 +218,11 @@ class TestWebSocketAuth:
                 pass
 
     def test_ws_auth_code_present(self):
-        """Verify that the websocket_endpoint accepts an api_key query param."""
+        """Verify that the websocket_endpoint accepts a token query param."""
         import inspect
         from app.routes.websocket import websocket_endpoint
         sig = inspect.signature(websocket_endpoint)
-        assert "api_key" in sig.parameters, "websocket_endpoint must accept api_key param"
+        assert "token" in sig.parameters, "websocket_endpoint must accept token param"
 
     def test_ws_reject_unknown_agent_on_nonexistent_relay(self, client):
         """WebSocket returns 4004 for non-existent relay before agent check."""

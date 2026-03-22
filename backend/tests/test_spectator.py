@@ -130,8 +130,12 @@ class TestSpectatorDoesNotAffectTurns:
 
     def test_spectator_does_not_affect_turns(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay.get("api_key", "")
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        alice_token = sample_relay.get("token", "")
+        join_code = sample_relay["join_code"]
+
+        # Get bob's token via join code
+        bob_resp = client.post(f"/relays/join/{join_code}?agent_name=bob")
+        bob_token = bob_resp.json()["token"]
 
         # Initial turn should be alice
         state = client.get(f"/relays/{relay_id}").json()
@@ -141,7 +145,7 @@ class TestSpectatorDoesNotAffectTurns:
         resp = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello!", "agent": "alice"},
-            headers=headers,
+            headers={"Authorization": f"Bearer {alice_token}"},
         )
         assert resp.status_code == 200
         assert resp.json()["next_turn"] == "bob"
@@ -154,7 +158,7 @@ class TestSpectatorDoesNotAffectTurns:
         resp2 = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hi!", "agent": "bob"},
-            headers=headers,
+            headers={"Authorization": f"Bearer {bob_token}"},
         )
         assert resp2.status_code == 200
         assert resp2.json()["next_turn"] == "alice"

@@ -1,13 +1,12 @@
 """
 Unit tests for service layer
 """
-import hashlib
 import pytest
 from unittest.mock import MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, Relay
+from app.models import AgentToken, Base, Relay
 from app.schemas import CreateRelayRequest
 from app.services.relay_service import RelayService
 from app.services.privacy_service import PrivacyService
@@ -41,7 +40,7 @@ class TestRelayService:
             is_public=True,
             owner_id="owner-1",
         )
-        relay, api_key = RelayService.create_relay(db, request)
+        relay, token = RelayService.create_relay(db, request)
 
         assert relay.id.startswith("relay-")
         assert relay.agent_names == ["alice", "bob"]
@@ -49,12 +48,14 @@ class TestRelayService:
         assert relay.current_turn == 0
         assert relay.is_public is True
         assert relay.owner_id == "owner-1"
-        assert relay.api_key_hash is not None
-        assert len(api_key) > 20
+        assert len(token) > 20
 
-        # Verify hash matches
-        expected_hash = hashlib.sha256(api_key.encode()).hexdigest()
-        assert relay.api_key_hash == expected_hash
+        # Verify token is stored in the database
+        agent_token = db.query(AgentToken).filter(AgentToken.token == token).first()
+        assert agent_token is not None
+        assert agent_token.relay_id == relay.id
+        assert agent_token.agent_name == "alice"
+        assert agent_token.is_creator is True
 
     def test_validate_agent(self, db):
         request = CreateRelayRequest(agent_names=["alice", "bob"])
@@ -114,26 +115,19 @@ class TestRelayService:
         assert RelayService.advance_turn(db, relay) == "c"
         assert RelayService.advance_turn(db, relay) == "a"
 
-    def test_verify_api_key(self, db):
+    def test_create_agent_token(self, db):
+        """Creating agent tokens stores them and returns plaintext."""
         request = CreateRelayRequest(agent_names=["alice", "bob"])
-        relay, api_key = RelayService.create_relay(db, request)
+        relay, _ = RelayService.create_relay(db, request)
 
-        assert RelayService.verify_api_key(relay, api_key) is True
-        assert RelayService.verify_api_key(relay, "wrong-key") is False
-
-    def test_verify_api_key_legacy_relay(self, db):
-        """Legacy relays without api_key_hash should always pass verification."""
-        relay = Relay(
-            id="legacy-relay",
-            agent_names=["a", "b"],
-            agent_count=2,
-            current_turn=0,
-            api_key_hash=None,
-        )
-        db.add(relay)
+        token_str = RelayService.create_agent_token(db, relay.id, "bob")
         db.commit()
+        assert len(token_str) > 20
 
-        assert RelayService.verify_api_key(relay, "any-key") is True
+        agent_token = db.query(AgentToken).filter(AgentToken.token == token_str).first()
+        assert agent_token is not None
+        assert agent_token.agent_name == "bob"
+        assert agent_token.is_creator is False
 
 
 class TestPrivacyService:

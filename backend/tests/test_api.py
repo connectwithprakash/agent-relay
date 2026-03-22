@@ -24,8 +24,8 @@ class TestCreateRelay:
         assert data["relay_id"].startswith("relay-")
         assert data["agent_names"] == ["alice", "bob"]
         assert data["current_turn"] == "alice"
-        assert data["api_key"] is not None
-        assert len(data["api_key"]) > 20
+        assert data["token"] is not None
+        assert len(data["token"]) > 20
 
     def test_create_relay_open(self, client):
         """Creating a relay without agent_names creates an open relay."""
@@ -75,11 +75,11 @@ class TestGetRelayState:
 class TestSendMessage:
     def test_send_message(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        token = sample_relay["token"]
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello!", "agent": "alice"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -89,61 +89,67 @@ class TestSendMessage:
 
     def test_send_message_wrong_turn(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        # Join as bob to get bob's token
+        join_code = sample_relay["join_code"]
+        join_resp = client.post(
+            f"/relays/join/{join_code}",
+            params={"agent_name": "bob"},
+        )
+        bob_token = join_resp.json()["token"]
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello!", "agent": "bob"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {bob_token}"},
         )
         assert response.status_code == 400
         assert "Not turn" in response.json()["detail"]
 
-    def test_send_message_with_api_key(self, client, sample_relay):
+    def test_send_message_with_bearer_token(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        token = sample_relay["token"]
         # Use Bearer auth
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello via Bearer!", "agent": "alice"},
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
 
-    def test_send_message_without_api_key(self, client, sample_relay):
+    def test_send_message_without_token(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        # No auth header - should fail since relay has api_key_hash
+        # No auth header - should fail since relay has tokens
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello!", "agent": "alice"},
         )
         assert response.status_code == 401
-        assert "API key required" in response.json()["detail"]
+        assert "Token required" in response.json()["detail"]
 
-    def test_send_message_invalid_api_key(self, client, sample_relay):
+    def test_send_message_invalid_token(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Hello!", "agent": "alice"},
-            headers={"X-API-Key": "wrong-key"},
+            headers={"Authorization": "Bearer wrong-token"},
         )
         assert response.status_code == 401
-        assert "Invalid API key" in response.json()["detail"]
+        assert "Invalid token" in response.json()["detail"]
 
     def test_send_message_auto_agent(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
-        # No agent specified - should auto-detect current turn
+        token = sample_relay["token"]
+        # No agent specified - should use agent from token (alice = creator)
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={"content": "Auto agent"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
         assert response.json()["next_turn"] == "bob"
 
     def test_send_structured_message(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        token = sample_relay["token"]
         response = client.post(
             f"/relays/{relay_id}/messages",
             json={
@@ -151,7 +157,7 @@ class TestSendMessage:
                 "type": "structured",
                 "agent": "alice",
             },
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
 
@@ -265,11 +271,11 @@ class TestRelayInstructions:
 class TestWebhooks:
     def test_register_webhook(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        token = sample_relay["token"]
         response = client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "https://example.com/webhook", "agent": "alice"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -277,7 +283,7 @@ class TestWebhooks:
         assert data["agent"] == "alice"
         assert "webhook_id" in data
 
-    def test_register_webhook_without_api_key(self, client, sample_relay):
+    def test_register_webhook_without_token(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
         response = client.post(
             f"/relays/{relay_id}/webhooks",
@@ -287,16 +293,16 @@ class TestWebhooks:
 
     def test_list_webhooks(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
-        api_key = sample_relay["api_key"]
+        token = sample_relay["token"]
         # Register a webhook first
         client.post(
             f"/relays/{relay_id}/webhooks",
             json={"url": "https://example.com/webhook", "agent": "bob"},
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         response = client.get(
             f"/relays/{relay_id}/webhooks",
-            headers={"X-API-Key": api_key},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
         data = response.json()

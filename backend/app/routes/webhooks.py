@@ -6,7 +6,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import require_relay_auth
+from ..auth import get_current_agent
 from ..database import get_db
 from ..models import Relay, Webhook
 from ..repositories import WebhookRepository
@@ -24,10 +24,11 @@ router = APIRouter()
 async def register_webhook(
     relay_id: str,
     req: RegisterWebhookRequest,
-    relay: Relay = Depends(require_relay_auth),
+    agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    """Register a webhook for receiving real-time updates. Requires API key for authenticated relays."""
+    """Register a webhook for receiving real-time updates. Requires token for authenticated relays."""
+    relay = agent_info["relay"]
 
     # Validate webhook URL to prevent SSRF
     if not validate_webhook_url(req.url):
@@ -59,10 +60,11 @@ async def register_webhook(
 
 @router.get("/relays/{relay_id}/webhooks", response_model=List[WebhookSchema])
 async def list_webhooks(
-    relay: Relay = Depends(require_relay_auth),
+    agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    """List all webhooks for a relay. Requires API key for authenticated relays."""
+    """List all webhooks for a relay. Requires token for authenticated relays."""
+    relay = agent_info["relay"]
     relay_id = relay.id
 
     webhook_repo = WebhookRepository(db)

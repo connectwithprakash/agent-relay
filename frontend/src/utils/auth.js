@@ -1,19 +1,19 @@
 /**
- * API key storage for relay authentication.
- * Keys are stored per relay in localStorage.
+ * Token storage for relay authentication.
+ * Tokens are stored per relay in localStorage.
  */
 
-const STORAGE_PREFIX = 'agent_relay_key_';
+const STORAGE_PREFIX = 'relay_token_';
 
-export function storeApiKey(relayId, apiKey) {
-  localStorage.setItem(`${STORAGE_PREFIX}${relayId}`, apiKey);
+export function storeToken(relayId, token) {
+  localStorage.setItem(`${STORAGE_PREFIX}${relayId}`, token);
 }
 
-export function getApiKey(relayId) {
+export function getToken(relayId) {
   return localStorage.getItem(`${STORAGE_PREFIX}${relayId}`);
 }
 
-export function removeApiKey(relayId) {
+export function removeToken(relayId) {
   localStorage.removeItem(`${STORAGE_PREFIX}${relayId}`);
 }
 
@@ -27,3 +27,8 @@ export function getAllStoredRelays() {
   }
   return relays;
 }
+
+// Backward compatibility aliases
+export const storeApiKey = storeToken;
+export const getApiKey = getToken;
+export const removeApiKey = removeToken;

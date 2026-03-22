@@ -20,25 +20,33 @@ class AgentRelayClient:
 
         with AgentRelayClient("http://localhost:8000") as client:
             relay = client.create_relay(["alice", "bob"])
-            result = client.send_message(relay.relay_id, "hello", "alice")
+            # token is auto-stored from create
+            result = client.send_message(relay.relay_id, "hello")
     """
 
     def __init__(
         self,
         base_url: str = "http://localhost:8000",
-        api_key: str | None = None,
+        token: str | None = None,
         max_retries: int = 3,
     ):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self._token = token
         self.max_retries = max_retries
         self._client = httpx.Client(base_url=self.base_url, headers=self._headers())
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Content-Type": "application/json"}
-        if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
+        if self._token:
+            h["Authorization"] = f"Bearer {self._token}"
         return h
+
+    def _update_auth_header(self) -> None:
+        """Update the client's default auth header after token changes."""
+        if self._token:
+            self._client.headers["Authorization"] = f"Bearer {self._token}"
+        elif "Authorization" in self._client.headers:
+            del self._client.headers["Authorization"]
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Send an HTTP request with automatic retry on 429 Rate Limit responses."""
@@ -64,7 +72,12 @@ class AgentRelayClient:
             json={"agent_names": agent_names, "is_public": is_public},
         )
         _raise_for_status(resp)
-        return RelayInfo(**resp.json())
+        result = resp.json()
+        # Auto-store the creator token
+        if result.get("token"):
+            self._token = result["token"]
+            self._update_auth_header()
+        return RelayInfo(**result)
 
     def get_relay(self, relay_id: str) -> RelayState:
         """Get the current state of a relay."""
@@ -78,24 +91,27 @@ class AgentRelayClient:
         self,
         relay_id: str,
         content: str,
-        agent: str,
-        api_key: str | None = None,
+        agent: str | None = None,
+        token: str | None = None,
     ) -> SendResult:
         """Send a message in a relay (only works when it's the agent's turn).
 
         Args:
             relay_id: The relay ID to send to.
             content: The message text to send.
-            agent: The name of the agent sending the message.
-            api_key: Per-call API key override. If provided, this is used instead
-                of the client-level ``api_key`` for this request only.
+            agent: Optional agent name. Server derives it from token if omitted.
+            token: Per-call token override. If provided, this is used instead
+                of the client-level token for this request only.
         """
         headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        body = {"content": content, "type": "text"}
+        if agent:
+            body["agent"] = agent
         resp = self._request(
             "POST", f"/relays/{relay_id}/messages",
-            json={"content": content, "type": "text", "agent": agent},
+            json=body,
             headers=headers,
         )
         _raise_for_status(resp)
@@ -157,7 +173,7 @@ class AgentRelayClient:
             agent_name: Name of the agent joining.
 
         Returns:
-            Dict with relay_id, join_code, agent_names, and current_turn.
+            Dict with relay_id, join_code, agent_names, current_turn, and token.
         """
         resp = self._request(
             "POST",
@@ -165,7 +181,12 @@ class AgentRelayClient:
             params={"agent_name": agent_name},
         )
         _raise_for_status(resp)
-        return resp.json()
+        result = resp.json()
+        # Auto-store the token
+        if result.get("token"):
+            self._token = result["token"]
+            self._update_auth_header()
+        return result
 
     def get_relay_by_code(self, join_code: str) -> dict:
         """Look up a relay by its short join code.
@@ -216,7 +237,12 @@ class AgentRelayClient:
                 params["capabilities"] = capabilities
         resp = self._request("POST", "/agents/register", params=params)
         _raise_for_status(resp)
-        return resp.json()
+        result = resp.json()
+        # Auto-store the token if relay was created/joined
+        if result.get("token"):
+            self._token = result["token"]
+            self._update_auth_header()
+        return result
 
     def discover(self, namespace: str) -> dict:
         """Discover all agents and relays in a namespace."""
@@ -310,14 +336,14 @@ class AgentRelayClient:
         """Create client from .agent-relay.json config file."""
         from .config import load_config
         config = load_config(path, relay_name)
-        return cls(base_url=config["server"], api_key=config.get("api_key"))
+        return cls(base_url=config["server"], token=config.get("token") or config.get("api_key"))
 
     @classmethod
     def from_env(cls):
         """Create client from AGENT_RELAY_* environment variables."""
         from .config import load_from_env
         config = load_from_env()
-        return cls(base_url=config["server"], api_key=config.get("api_key"))
+        return cls(base_url=config["server"], token=config.get("token") or config.get("api_key"))
 
     # -- Utility --
 

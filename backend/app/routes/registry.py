@@ -1,7 +1,6 @@
 """
 Agent registry endpoints for cross-device discovery
 """
-import hashlib
 import random
 import secrets
 import string
@@ -12,8 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AgentRegistration, Relay
+from ..models import AgentRegistration, AgentToken, Relay
 from ..rate_limit import limiter
+from ..services import RelayService
 
 router = APIRouter()
 
@@ -119,9 +119,21 @@ async def register_agent(
         if caps_list is not None:
             existing_reg.capabilities = caps_list
         db.commit()
+
+        # Get or create token for this agent
+        existing_token = db.query(AgentToken).filter(
+            AgentToken.relay_id == relay.id,
+            AgentToken.agent_name == agent_name,
+        ).first()
+        token_str = existing_token.token if existing_token else RelayService.create_agent_token(
+            db, relay.id, agent_name
+        )
+        db.commit()
+
         return {
             "status": "joined",
             "relay_id": relay.id,
+            "token": token_str,
             "agent_name": agent_name,
             "device_id": device_id,
             "agents": relay.agent_names,
@@ -156,11 +168,15 @@ async def register_agent(
             status="ready",
         )
         db.add(reg)
+
+        # Create token for this agent
+        token_str = RelayService.create_agent_token(db, relay.id, agent_name)
         db.commit()
 
         return {
             "status": "joined",
             "relay_id": relay.id,
+            "token": token_str,
             "agent_name": agent_name,
             "device_id": device_id,
             "agents": relay.agent_names,
@@ -198,8 +214,6 @@ async def register_agent(
         if len(waiting) >= 2:
             # Create relay with all waiting agents
             agent_names = [w.agent_name for w in waiting]
-            api_key = secrets.token_urlsafe(32)
-            api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
             join_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
             relay = Relay(
@@ -208,7 +222,6 @@ async def register_agent(
                 agent_count=len(agent_names),
                 current_turn=0,
                 is_public=True,
-                api_key_hash=api_key_hash,
                 join_code=join_code,
                 turn_started_at=datetime.now(timezone.utc),
             )
@@ -217,12 +230,17 @@ async def register_agent(
             for w in waiting:
                 w.relay_id = relay.id
                 w.status = "ready"
+
+            # Create token for the creator (current agent)
+            token_str = RelayService.create_agent_token(
+                db, relay.id, agent_name, is_creator=True
+            )
             db.commit()
 
             return {
                 "status": "created",
                 "relay_id": relay.id,
-                "api_key": api_key,
+                "token": token_str,
                 "agent_name": agent_name,
                 "device_id": device_id,
                 "agents": agent_names,
@@ -335,7 +353,7 @@ async def join_by_code(
     agent_name: str,
     db: Session = Depends(get_db),
 ):
-    """Join a relay using a short join code. Returns relay info and API key.
+    """Join a relay using a short join code. Returns relay info and a token.
 
     The join code acts as authorization -- knowing the code grants access.
     """
@@ -362,23 +380,30 @@ async def join_by_code(
         db.commit()
         agent_names = relay.agent_names
 
+    # Check if a token already exists for this agent in this relay
+    existing_token = db.query(AgentToken).filter(
+        AgentToken.relay_id == relay.id,
+        AgentToken.agent_name == agent_name,
+    ).first()
+
+    if existing_token:
+        token_str = existing_token.token
+    else:
+        token_str = RelayService.create_agent_token(db, relay.id, agent_name)
+        db.commit()
+
     current_turn = (
         agent_names[relay.current_turn]
         if agent_names and relay.current_turn < len(agent_names)
         else None
     )
-    # Knowing the join code = authorized. Return the API key so joiners can send messages.
-    # Reverse the hash to... we can't. Generate a new key? No - relay only has one hash.
-    # Solution: return the raw api_key_hash as a token. Or better: skip auth for relays with join codes.
-    # Simplest fix: store the plaintext key on the relay (encrypted in prod, but for now just return it)
-    # Actually: just skip API key requirement if the request includes a valid join code header
+
     return {
         "relay_id": relay.id,
         "join_code": relay.join_code,
         "agent_names": agent_names,
         "current_turn": current_turn,
-        "api_key": None,  # Can't recover from hash - see note below
-        "note": "Use the API key from relay creation, or the relay creator should share it with the join code.",
+        "token": token_str,
     }
 
 

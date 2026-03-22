@@ -60,10 +60,10 @@ export function useRelayCreation() {
       const trimmed = isOpenRelay ? null : agentNames.map((n) => n.trim());
       const result = await createRelay(trimmed, null, isPublic, { description });
       setCreatedRelay(result);
-      // Store API key for this relay so dashboard can authenticate
-      if (result.api_key && result.relay_id) {
-        const { storeApiKey } = await import('../utils/auth.js');
-        storeApiKey(result.relay_id, result.api_key);
+      // Store token for this relay so dashboard can authenticate
+      if (result.token && result.relay_id) {
+        const { storeToken } = await import('../utils/auth.js');
+        storeToken(result.relay_id, result.token);
       }
       return result;
     } catch (err) {

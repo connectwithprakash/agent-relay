@@ -26,7 +26,7 @@ class TestJoinByCode:
     """Tests for POST /relays/join/{join_code}"""
 
     def test_join_by_code_success(self, client):
-        """Joining with a valid code should return relay info."""
+        """Joining with a valid code should return relay info and a token."""
         # Create relay
         create_resp = client.post("/relays", json={
             "agent_names": ["alice", "bob"],
@@ -46,6 +46,8 @@ class TestJoinByCode:
         assert data["relay_id"] == relay_id
         assert data["join_code"] == join_code
         assert "charlie" in data["agent_names"]
+        assert data["token"] is not None
+        assert len(data["token"]) > 20
 
     def test_join_by_code_invalid(self, client):
         """Joining with an invalid code should return 404."""

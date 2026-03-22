@@ -103,6 +103,24 @@ class WebhookDelivery(Base):
         return f"<WebhookDelivery {self.id} status={self.status}>"
 
 
+class AgentToken(Base):
+    """Token-based authentication for agents in a relay"""
+    __tablename__ = "agent_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String, unique=True, nullable=False, index=True)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=False)
+    agent_name = Column(String, nullable=False)
+    is_creator = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    relay = relationship("Relay")
+
+    def __repr__(self):
+        return f"<AgentToken {self.agent_name}@{self.relay_id}>"
+
+
 class AgentRegistration(Base):
     """Cross-device agent registration for namespace-based discovery"""
     __tablename__ = "agent_registrations"

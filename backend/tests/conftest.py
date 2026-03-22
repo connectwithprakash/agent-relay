@@ -110,11 +110,11 @@ def private_relay(client):
 def sample_message(client, sample_relay):
     """Send a sample message and return the response along with relay info."""
     relay_id = sample_relay["relay_id"]
-    api_key = sample_relay["api_key"]
+    token = sample_relay["token"]
     response = client.post(
         f"/relays/{relay_id}/messages",
         json={"content": "Hello from Alice", "agent": "alice"},
-        headers={"X-API-Key": api_key},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200, f"Failed to send message: {response.text}"
     return {
@@ -133,8 +133,8 @@ def relay_id(client):
 
 @pytest.fixture()
 def relay_with_key(client):
-    """Create a relay and return (relay_id, api_key) tuple."""
+    """Create a relay and return (relay_id, token) tuple."""
     resp = client.post("/relays", json={"agent_names": ["alice", "bob"]})
     assert resp.status_code == 200
     data = resp.json()
-    return data["relay_id"], data["api_key"]
+    return data["relay_id"], data["token"]

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from ..auth import require_relay_auth
+from ..auth import get_current_agent
 from ..database import get_db
 from ..models import Relay, Message
 from ..repositories import MessageRepository
@@ -30,11 +30,19 @@ router = APIRouter()
 async def send_message(
     request: Request,
     req: SendMessageRequest,
-    relay: Relay = Depends(require_relay_auth),
+    agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    """Send a message (only if your turn). Requires API key for authenticated relays."""
+    """Send a message (only if your turn). Requires token for authenticated relays."""
+    relay = agent_info["relay"]
     relay_id = relay.id
+
+    # Agent name comes from the token; fall back to request body for join-code auth
+    agent_from_token = agent_info["agent_name"]
+    if agent_from_token:
+        agent_override = agent_from_token
+    else:
+        agent_override = req.agent  # join-code fallback
 
     # Use per-relay lock to prevent race conditions between
     # turn validation, message creation, and turn advancement
@@ -69,7 +77,7 @@ async def send_message(
 
         # Validate agent and turn using service
         try:
-            agent, agent_index = RelayService.validate_agent(relay, req.agent)
+            agent, agent_index = RelayService.validate_agent(relay, agent_override)
             RelayService.validate_turn(relay, agent_index)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -117,7 +125,7 @@ async def send_message(
 @limiter.limit("10/minute")
 async def skip_turn(
     request: Request,
-    relay: Relay = Depends(require_relay_auth),
+    agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     """Skip the current turn if the turn timeout has elapsed.
@@ -125,6 +133,7 @@ async def skip_turn(
     Only succeeds when the relay has a turn_timeout configured and the
     current turn's time has been exceeded.
     """
+    relay = agent_info["relay"]
     relay_id = relay.id
     lock = get_relay_lock(relay_id)
     with lock:

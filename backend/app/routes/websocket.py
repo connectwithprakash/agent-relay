@@ -1,13 +1,13 @@
 """
 WebSocket endpoint for real-time message updates
 """
-import hashlib
 import logging
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from ..database import SessionLocal
+from ..models import AgentToken
 from ..repositories import RelayRepository
 from ..websocket_manager import manager
 
@@ -21,7 +21,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     relay_id: str,
     agent: str,
-    api_key: Optional[str] = Query(default=None),
+    token: Optional[str] = Query(default=None),
 ):
     """WebSocket endpoint for real-time message updates"""
     db = SessionLocal()
@@ -36,30 +36,37 @@ async def websocket_endpoint(
             await websocket.close(code=4003, reason="Unknown agent")
             return
 
-        # Authenticate WebSocket connection if relay has an API key
-        if relay.api_key_hash is not None:
-            if api_key:
+        # Authenticate WebSocket connection using token
+        # Check if any tokens exist for this relay (if so, auth is required)
+        has_tokens = db.query(AgentToken).filter(AgentToken.relay_id == relay_id).first() is not None
+
+        if has_tokens:
+            if token:
                 logger.warning(
-                    "API key passed via query parameter for relay %s. "
+                    "Token passed via query parameter for relay %s. "
                     "Prefer the Sec-WebSocket-Protocol header for credentials.",
                     relay_id,
                 )
-            # Also accept api_key from subprotocol header
-            subprotocol_key: Optional[str] = None
+            # Also accept token from subprotocol header
+            subprotocol_token: Optional[str] = None
             for proto in (websocket.headers.get("sec-websocket-protocol") or "").split(","):
                 proto = proto.strip()
-                if proto.startswith("apikey-"):
-                    subprotocol_key = proto[len("apikey-"):]
+                if proto.startswith("token-"):
+                    subprotocol_token = proto[len("token-"):]
                     break
 
-            effective_key = api_key or subprotocol_key
+            effective_token = token or subprotocol_token
 
-            if not effective_key:
+            if not effective_token:
                 await websocket.close(code=4001, reason="Authentication required")
                 return
-            provided_hash = hashlib.sha256(effective_key.encode()).hexdigest()
-            if provided_hash != relay.api_key_hash:
-                await websocket.close(code=4001, reason="Invalid API key")
+
+            agent_token = db.query(AgentToken).filter(
+                AgentToken.token == effective_token
+            ).first()
+
+            if not agent_token or agent_token.relay_id != relay_id:
+                await websocket.close(code=4001, reason="Invalid token")
                 return
 
         await manager.connect(relay_id, agent, websocket)
