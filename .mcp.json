@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "agent-relay": {
-      "command": "/Users/prakash/Developer/agent-relay/mcp-server/.venv/bin/python3",
-      "args": ["-m", "agent_relay_mcp"],
+      "command": "/Users/prakash/Developer/agent-relay/mcp-server/.venv/bin/agent-relay-mcp",
       "env": {
         "RELAY_URL": "http://localhost:8000"
       }

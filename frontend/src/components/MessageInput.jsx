@@ -76,12 +76,14 @@ export default function MessageInput({ onSendMessage, currentTurn, agentName, di
           {isMyTurn && charCount > 0 && (
             <span
               className={`absolute bottom-2 right-3 text-[10px] font-medium ${
-                charCount > MAX_CHARS * 0.9
-                  ? 'text-amber-500'
-                  : 'text-slate-400 dark:text-slate-500'
+                charCount >= MAX_CHARS
+                  ? 'text-red-500'
+                  : charCount > MAX_CHARS * 0.9
+                    ? 'text-amber-500'
+                    : 'text-slate-400 dark:text-slate-500'
               }`}
             >
-              {charCount}/{MAX_CHARS}
+              {charCount >= MAX_CHARS ? `Limit reached · ${charCount}/${MAX_CHARS}` : `${charCount}/${MAX_CHARS}`}
             </span>
           )}
         </div>

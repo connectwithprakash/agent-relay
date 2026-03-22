@@ -102,8 +102,8 @@ async def send_message(
             content=req.content,
             data=req.data,
             type=req.type,
+            message_type=req.type,
             reply_to=req.reply_to,
-            # message_type synced via type column
             idempotency_key=req.idempotency_key,
         )
         message = message_repo.create(message)

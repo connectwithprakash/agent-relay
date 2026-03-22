@@ -1,6 +1,7 @@
 """
 Relay service - Business logic for relay operations
 """
+import logging
 import random
 import secrets
 import string
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 from ..models import AgentToken, Relay
 from ..repositories import RelayRepository, MessageRepository, PresenceRepository
 from ..schemas import AgentPresenceSchema, CreateRelayRequest, RelayState
+
+logger = logging.getLogger(__name__)
 
 
 class RelayService:
@@ -260,7 +263,7 @@ class RelayService:
             presence_list = RelayService.get_presence_for_relay(db, relay)
             disconnected = {p.agent for p in presence_list if p.status == "disconnected"}
         except Exception:
-            pass
+            logger.warning("Failed to fetch presence for starvation check in relay %s", relay.id)
 
         starving = [(a, cnt) for a, cnt in turns_waited.items()
                     if cnt >= max_skip and a != current_agent and a in agent_names and a not in disconnected]

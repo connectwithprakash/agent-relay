@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import cast, String
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -56,15 +57,15 @@ async def search_agents(
     if status:
         query = query.filter(AgentRegistration.status == status)
 
-    # Filter by capability (JSON array contains) - must load all for in-memory filter
+    # Filter by capability at SQL level (avoids loading all records into Python)
     if capability:
-        all_results = query.all()
-        filtered = [r for r in all_results if r.capabilities and capability in r.capabilities]
-        total = len(filtered)
-        results = filtered[offset : offset + limit]
-    else:
-        total = query.count()
-        results = query.offset(offset).limit(limit).all()
+        query = query.filter(
+            AgentRegistration.capabilities.isnot(None),
+            cast(AgentRegistration.capabilities, String).contains(f'"{capability}"'),
+        )
+
+    total = query.count()
+    results = query.offset(offset).limit(limit).all()
 
     return {
         "agents": [_agent_to_dict(r) for r in results],
