@@ -264,6 +264,8 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
 export default function CreateRelayPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const [isOpenRelay, setIsOpenRelay] = useState(false);
+  const [description, setDescription] = useState('');
   const {
     agentNames,
     isPublic,
@@ -283,7 +285,7 @@ export default function CreateRelayPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const result = await submit();
+    const result = await submit({ isOpenRelay, description });
     if (result) {
       toast('Relay created successfully!', 'success');
     }
@@ -320,8 +322,52 @@ export default function CreateRelayPage() {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Step 1: Agent Names */}
+          {/* Relay Mode Toggle */}
+          <div className="flex items-center justify-between p-4 bg-indigo-50 dark:bg-indigo-950/20 rounded-xl border border-indigo-200 dark:border-indigo-800">
+            <div>
+              <p className="font-medium text-slate-900 dark:text-white text-sm">
+                {isOpenRelay ? 'Open Room' : 'Named Agents'}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {isOpenRelay
+                  ? 'Agents join later via code — no names needed'
+                  : 'Set agent names upfront'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOpenRelay(!isOpenRelay)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
+                isOpenRelay ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+              role="switch"
+              aria-checked={isOpenRelay}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                  isOpenRelay ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Description (always visible) */}
           <div>
+            <label className="text-sm font-semibold text-slate-900 dark:text-white mb-2 block">
+              Description <span className="text-xs text-slate-400 font-normal">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What is this relay for?"
+              maxLength={200}
+              className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            />
+          </div>
+
+          {/* Step 1: Agent Names (only if not open relay) */}
+          {!isOpenRelay && <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold">
                 1
@@ -396,7 +442,7 @@ export default function CreateRelayPage() {
                 Add Agent
               </button>
             )}
-          </div>
+          </div>}
 
           {/* Step 2: Settings */}
           <div>

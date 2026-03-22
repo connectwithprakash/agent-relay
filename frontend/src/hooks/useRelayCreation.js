@@ -43,18 +43,22 @@ export function useRelayCreation() {
     return null;
   }, [agentNames]);
 
-  const submit = useCallback(async () => {
-    const validationError = validate();
-    if (validationError) {
-      setError(validationError);
-      return null;
+  const submit = useCallback(async (options = {}) => {
+    const { isOpenRelay = false, description = '' } = options;
+
+    if (!isOpenRelay) {
+      const validationError = validate();
+      if (validationError) {
+        setError(validationError);
+        return null;
+      }
     }
 
     try {
       setSubmitting(true);
       setError(null);
-      const trimmed = agentNames.map((n) => n.trim());
-      const result = await createRelay(trimmed, null, isPublic);
+      const trimmed = isOpenRelay ? null : agentNames.map((n) => n.trim());
+      const result = await createRelay(trimmed, null, isPublic, { description });
       setCreatedRelay(result);
       // Store API key for this relay so dashboard can authenticate
       if (result.api_key && result.relay_id) {
