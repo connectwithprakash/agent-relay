@@ -142,16 +142,19 @@ async def send_message(
 async def skip_turn(
     request: Request,
     force: bool = False,
+    target_agent: str = None,
     agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    """Skip the current agent's turn.
+    """Skip an agent's turn.
 
-    Two modes:
-    1. Timeout-based (default): succeeds only when turn_timeout is configured
-       and the current turn's time has been exceeded.
-    2. Force skip (force=true): any authenticated agent can skip the current
-       turn immediately. Use when an agent is disconnected or unresponsive.
+    Modes:
+    1. Timeout-based (default): succeeds only when turn_timeout is configured and expired.
+    2. Force skip (force=true): any authenticated agent can skip immediately.
+
+    Args:
+        force: Skip immediately without timeout check.
+        target_agent: Skip this specific agent. If not provided, skips current turn holder.
     """
     relay = agent_info["relay"]
     relay_id = relay.id
@@ -173,7 +176,12 @@ async def skip_turn(
         )
 
         if force:
-            # Any authenticated agent can force-skip a disconnected agent
+            # If target_agent specified, advance turn TO skip past them
+            if target_agent and target_agent in agent_names:
+                # Set current turn to the target, then advance past them
+                relay.current_turn = agent_names.index(target_agent)
+                skipped_agent = target_agent
+                db.flush()
             next_turn = RelayService.advance_turn(db, relay)
             return {
                 "status": "ok",

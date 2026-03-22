@@ -196,7 +196,7 @@ def relay_send(
     # Auto-send heartbeat before sending a message
     _send_heartbeat(relay_id, agent, "active")
 
-    body: dict = {"content": message, "type": "text", "message_type": type}
+    body: dict = {"content": message, "type": type, "message_type": type}
     if agent:
         body["agent"] = agent
     if reply_to:
