@@ -103,7 +103,7 @@ async def send_message(
             data=req.data,
             type=req.type,
             reply_to=req.reply_to,
-            message_type=req.message_type,
+            message_type=req.message_type or req.type,
             idempotency_key=req.idempotency_key,
         )
         message = message_repo.create(message)
