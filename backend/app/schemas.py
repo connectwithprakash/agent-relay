@@ -82,6 +82,8 @@ class SendMessageRequest(BaseModel):
     type: Literal["text", "structured"] = "text"
     agent: Optional[str] = None  # Auto-detected if None
     next_agent: Optional[str] = None  # Direct turn to specific agent (skip round-robin)
+    reply_to: Optional[int] = None  # Message ID to reply to (for threading)
+    message_type: str = Field(default="text", pattern=r"^(text|question|action-item|decision|bug-report|code)$")
     idempotency_key: Optional[str] = Field(default=None, max_length=255)
 
     @field_validator("data")
@@ -111,6 +113,8 @@ class MessageSchema(BaseModel):
     content: Optional[str] = None
     data: Optional[dict] = None
     type: str
+    reply_to: Optional[int] = None
+    message_type: str = "text"
     created_at: str
 
 

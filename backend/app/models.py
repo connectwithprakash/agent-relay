@@ -51,11 +51,14 @@ class Message(Base):
     content = Column(Text, nullable=True)  # Plain text message
     data = Column(JSON, nullable=True)  # Structured data
     type = Column(String, default="text")  # 'text' or 'structured'
+    reply_to = Column(Integer, ForeignKey("messages.id"), nullable=True)  # Thread reference
+    message_type = Column(String, default="text")  # text, question, action-item, decision, bug-report, code
     idempotency_key = Column(String(255), nullable=True)  # Prevents duplicate messages
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     relay = relationship("Relay", back_populates="messages")
+    parent = relationship("Message", remote_side=[id], backref="replies")
 
     def __repr__(self):
         return f"<Message {self.id} from {self.agent_name}>"

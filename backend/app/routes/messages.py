@@ -82,6 +82,18 @@ async def send_message(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+        # Validate reply_to if provided
+        if req.reply_to is not None:
+            parent_msg = db.query(Message).filter(
+                Message.id == req.reply_to,
+                Message.relay_id == relay_id,
+            ).first()
+            if parent_msg is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"reply_to message {req.reply_to} not found in this relay",
+                )
+
         # Create message
         message = Message(
             relay_id=relay_id,
@@ -90,6 +102,8 @@ async def send_message(
             content=req.content,
             data=req.data,
             type=req.type,
+            reply_to=req.reply_to,
+            message_type=req.message_type,
             idempotency_key=req.idempotency_key,
         )
         message = message_repo.create(message)
@@ -105,6 +119,8 @@ async def send_message(
         "content": message.content,
         "data": message.data,
         "type": message.type,
+        "reply_to": message.reply_to,
+        "message_type": message.message_type,
         "created_at": message.created_at.isoformat(),
         "next_turn": next_turn
     }
@@ -188,9 +204,10 @@ async def get_message_history(
     limit: int = 50,
     offset: int = 0,
     owner_id: str = None,
+    message_type: str = None,
     db: Session = Depends(get_db)
 ):
-    """Get message history"""
+    """Get message history. Optionally filter by message_type (e.g. question, action-item)."""
     relay = get_relay_or_404(db, relay_id)
 
     if not PrivacyService.check_access(relay, owner_id):
@@ -200,8 +217,8 @@ async def get_message_history(
     limit = min(limit, 100)
 
     message_repo = MessageRepository(db)
-    messages = message_repo.get_by_relay_id(relay_id, limit, offset)
-    total_count = message_repo.count_by_relay_id(relay_id)
+    messages = message_repo.get_by_relay_id(relay_id, limit, offset, message_type=message_type)
+    total_count = message_repo.count_by_relay_id(relay_id, message_type=message_type)
 
     return MessageHistory(
         relay_id=relay_id,
@@ -212,6 +229,8 @@ async def get_message_history(
                 content=msg.content,
                 data=msg.data,
                 type=msg.type,
+                reply_to=msg.reply_to,
+                message_type=msg.message_type,
                 created_at=msg.created_at.isoformat()
             )
             for msg in messages

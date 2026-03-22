@@ -109,7 +109,12 @@ def relay_create(agent_names: list[str], is_public: bool = False) -> dict:
 
 @mcp.tool()
 def relay_send(
-    relay_id: str = "", message: str = "", agent: str = "", token: str = ""
+    relay_id: str = "",
+    message: str = "",
+    agent: str = "",
+    token: str = "",
+    type: str = "text",
+    reply_to: int = 0,
 ) -> dict:
     """Send a message in a relay. Only works when it's the agent's turn.
 
@@ -121,6 +126,8 @@ def relay_send(
         message: The message text to send.
         agent: The name of the agent sending the message (defaults to session agent, optional with token auth).
         token: Optional token for authentication (defaults to session token).
+        type: Message type - text, question, action-item, decision, bug-report, code.
+        reply_to: Message ID to reply to (for threading). Use 0 for no reply.
     """
     relay_id = relay_id or _session.get("relay_id", "")
     agent = agent or _session.get("agent", "")
@@ -142,9 +149,11 @@ def relay_send(
     if not token and join_code:
         headers["X-Join-Code"] = join_code
 
-    body = {"content": message, "type": "text"}
+    body: dict = {"content": message, "type": "text", "message_type": type}
     if agent:
         body["agent"] = agent
+    if reply_to:
+        body["reply_to"] = reply_to
 
     try:
         resp = _client.post(
@@ -159,21 +168,26 @@ def relay_send(
 
 
 @mcp.tool()
-def relay_read(relay_id: str = "", limit: int = 20) -> dict:
-    """Read recent messages from a relay.
+def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
+    """Read recent messages from a relay. Optionally filter by message type.
 
     Args:
         relay_id: The relay ID to read from (defaults to session relay).
         limit: Maximum number of messages to return (default: 20).
+        type: Filter by message type (text, question, action-item, decision, bug-report, code). Empty = all.
     """
     relay_id = relay_id or _session.get("relay_id", "")
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
 
+    params: dict = {"limit": limit}
+    if type:
+        params["message_type"] = type
+
     try:
         resp = _client.get(
             f"/relays/{relay_id}/history",
-            params={"limit": limit},
+            params=params,
         )
         resp.raise_for_status()
         return resp.json()

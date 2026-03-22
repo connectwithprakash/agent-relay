@@ -18,25 +18,33 @@ class MessageRepository:
         self,
         relay_id: str,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        message_type: str = None,
     ) -> List[Message]:
-        """Get messages for a relay with pagination"""
-        return (
+        """Get messages for a relay with pagination and optional message_type filter"""
+        query = (
             self.db.query(Message)
             .filter(Message.relay_id == relay_id)
+        )
+        if message_type:
+            query = query.filter(Message.message_type == message_type)
+        return (
+            query
             .order_by(Message.created_at.asc())
             .offset(offset)
             .limit(limit)
             .all()
         )
-    
-    def count_by_relay_id(self, relay_id: str) -> int:
-        """Count messages for a relay"""
-        return (
+
+    def count_by_relay_id(self, relay_id: str, message_type: str = None) -> int:
+        """Count messages for a relay, optionally filtered by message_type"""
+        query = (
             self.db.query(Message)
             .filter(Message.relay_id == relay_id)
-            .count()
         )
+        if message_type:
+            query = query.filter(Message.message_type == message_type)
+        return query.count()
 
     def count_by_relay_ids(self, relay_ids: List[str]) -> Dict[str, int]:
         """Count messages for multiple relays in a single query using GROUP BY"""
