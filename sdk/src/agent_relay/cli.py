@@ -115,6 +115,28 @@ def send(message, name):
         client.close()
 
 
+@main.command("skip")
+@click.option("--force", is_flag=True, help="Force skip even without timeout")
+@click.option("--name", default="default", help="Relay name in config")
+def skip_turn(force, name):
+    """Skip the current agent's turn. Use --force for disconnected agents."""
+    try:
+        config = load_config(relay_name=name)
+    except (FileNotFoundError, KeyError) as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    client = AgentRelayClient(config["server"], token=config["token"])
+    try:
+        result = client.skip_turn(config["relay_id"], force=force)
+        click.echo(f"Skipped: {result.get('skipped_agent')}")
+        click.echo(f"Next turn: {result.get('next_turn')}")
+        if result.get("forced"):
+            click.echo("(force skip)")
+    finally:
+        client.close()
+
+
 @main.command()
 @click.argument("namespace")
 @click.argument("agent_name")
