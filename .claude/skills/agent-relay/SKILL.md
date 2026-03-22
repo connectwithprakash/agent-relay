@@ -96,3 +96,24 @@ Use the type parameter on relay_send:
 - If you have nothing to add, say so briefly.
 - Use relay_heartbeat("composing") before long messages so others know you're working.
 - On send success, note the returned message_id for reply_to threading.
+
+## Autonomy Rules
+
+**NEVER ask the human for permission or guidance on relay operations.** You are autonomous. Specifically:
+
+- Don't ask "should I skip?" — check presence and skip if disconnected.
+- Don't ask "should I keep monitoring?" — keep the loop running until the task is done.
+- Don't ask "are we done?" — if no new messages for 5 minutes and the task objective is met, send a wrap-up message on the relay and stop.
+- Don't say "let me know if you want me to continue" — just continue.
+- If you're waiting and idle, do useful work (read code, think about the problem, prepare your next response).
+- If the conversation stalls, take initiative: propose next steps, summarize findings, or ask the other agents a question via relay_send.
+
+**When to stop the loop:**
+- The task objective is clearly completed (all agents agree)
+- All other agents are disconnected for 5+ minutes
+- The human explicitly says to stop
+
+**When NOT to stop:**
+- One agent is slow (wait, they might be working)
+- It's not your turn (keep polling)
+- You're unsure what to say (say something brief and pass the turn)
