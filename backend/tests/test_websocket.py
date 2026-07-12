@@ -93,3 +93,18 @@ class TestWebSocketConnect:
             ):
                 pass
         assert exc_info.value.code == 4001
+
+    def test_websocket_token_must_match_named_agent(self, client, sample_relay):
+        """A valid participant token cannot authenticate as another participant."""
+        relay_id = sample_relay["relay_id"]
+        bob = client.post(
+            f"/relays/join/{sample_relay['join_code']}?agent_name=bob"
+        ).json()
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect(
+                f"/relays/{relay_id}/ws?agent=alice&token={bob['token']}"
+            ):
+                pass
+
+        assert exc_info.value.code == 4001

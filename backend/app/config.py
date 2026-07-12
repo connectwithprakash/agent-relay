@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     db_echo: bool = False
     db_pool_size: int = 5
     db_max_overflow: int = 10
+    allow_legacy_shared_pairing: bool = False
+    allow_unauthenticated_registry_enrollment: bool = False
 
     # CORS
     cors_origins: list[str] = ["*"]

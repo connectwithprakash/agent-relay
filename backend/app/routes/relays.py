@@ -44,13 +44,11 @@ async def create_pairing_invitation(
         raise HTTPException(status_code=400, detail="Invitation target is not a relay participant")
     if db.query(AgentToken).filter(AgentToken.relay_id == relay_id, AgentToken.agent_name == agent_name).first():
         raise HTTPException(status_code=409, detail="Participant already has a credential")
+    secret = generate_secret()
     invitation = PairingInvitation(
         id=str(uuid.uuid4()), relay_id=relay_id, agent_name=agent_name,
-        secret_hash=digest(generate_secret()), expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 86400)),
+        secret_hash=digest(secret), expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 86400)),
     )
-    # Generate once more so only the returned secret is redeemable.
-    secret = generate_secret()
-    invitation.secret_hash = digest(secret)
     db.query(PairingInvitation).filter(PairingInvitation.relay_id == relay_id, PairingInvitation.agent_name == agent_name).delete()
     db.add(invitation); db.commit()
     return {"invitation": secret, "agent_name": agent_name, "expires_at": invitation.expires_at.isoformat()}

@@ -71,6 +71,14 @@ def client(db_session, monkeypatch):
 
     app.dependency_overrides[get_db] = override_get_db
 
+    # Most existing compatibility tests exercise the deprecated shared route.
+    monkeypatch.setattr(
+        "app.routes.registry.settings.allow_legacy_shared_pairing", True
+    )
+    monkeypatch.setattr(
+        "app.routes.registry.settings.allow_unauthenticated_registry_enrollment", True
+    )
+
     # Patch SessionLocal in main module so WebSocket endpoint uses test DB.
     # Wrap the session so that the WS endpoint's db.close() is a no-op
     # (the real cleanup happens in the db_session fixture teardown).

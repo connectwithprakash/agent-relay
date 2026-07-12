@@ -62,7 +62,7 @@ export const createRelay = async (agentNames, ownerId = null, isPublic = false, 
 };
 
 /**
- * Look up a relay by its short join code
+ * Look up a relay by its legacy relay-wide pairing code
  */
 export const getRelayByCode = async (joinCode) => {
   const response = await safeFetch(`${API_BASE_URL}/relays/code/${joinCode.toUpperCase()}`);
@@ -70,13 +70,43 @@ export const getRelayByCode = async (joinCode) => {
 };
 
 /**
- * Join a relay using a short join code
+ * Join a relay using legacy relay-wide pairing material
  */
 export const joinByCode = async (joinCode, agentName) => {
   const url = new URL(`${API_BASE_URL}/relays/join/${joinCode.toUpperCase()}`);
   url.searchParams.append('agent_name', agentName);
   const response = await safeFetch(url, { method: 'POST' });
   return handleResponse(response, 'join relay');
+};
+
+/** Create a one-time invitation bound to one named participant. */
+export const createInvitation = async (relayId, agentName, expiresInSeconds = 900) => {
+  const { getToken } = await import('./auth.js');
+  const token = getToken(relayId);
+  const params = new URLSearchParams({
+    agent_name: agentName,
+    expires_in_seconds: String(expiresInSeconds),
+  });
+  const response = await safeFetch(
+    `${API_BASE_URL}/relays/${relayId}/invitations?${params}`,
+    {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  );
+  return handleResponse(response, 'create invitation');
+};
+
+/** Redeem a participant-bound invitation and persist the issued token. */
+export const redeemInvitation = async (invitation) => {
+  const response = await safeFetch(
+    `${API_BASE_URL}/pairing-invitations/${encodeURIComponent(invitation)}/redeem`,
+    { method: 'POST' }
+  );
+  const result = await handleResponse(response, 'redeem invitation');
+  const { storeToken } = await import('./auth.js');
+  storeToken(result.relay_id, result.token);
+  return result;
 };
 
 /**
@@ -107,8 +137,12 @@ export const sendMessage = async (relayId, content, agent = null, token = null) 
  * Get message history for a relay
  */
 export const getHistory = async (relayId, limit = 50, offset = 0) => {
+  const { getToken } = await import('./auth.js');
+  const token = getToken(relayId);
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
   const response = await safeFetch(
-    `${API_BASE_URL}/relays/${relayId}/history?limit=${limit}&offset=${offset}`
+    `${API_BASE_URL}/relays/${relayId}/history?limit=${limit}&offset=${offset}`,
+    { headers }
   );
   return handleResponse(response, 'fetch history');
 };

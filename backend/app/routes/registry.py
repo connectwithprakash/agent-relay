@@ -9,9 +9,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import cast, String
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..config import settings
 from ..models import AgentRegistration, AgentToken, Relay
 from ..rate_limit import limiter
 from ..services import RelayService
@@ -91,6 +93,12 @@ async def register_agent(
     When two or more agents register with the same namespace, a relay is
     automatically created and all waiting agents are joined to it.
     """
+    if not settings.allow_unauthenticated_registry_enrollment:
+        raise HTTPException(
+            status_code=410,
+            detail="Unauthenticated registry enrollment is disabled; use named invitations",
+        )
+
     # Validate agent_name length
     if not agent_name or len(agent_name) > 100:
         raise HTTPException(
@@ -121,20 +129,22 @@ async def register_agent(
             existing_reg.capabilities = caps_list
         db.commit()
 
-        # Get or create token for this agent
+        # A one-way token hash cannot reproduce the original credential. The
+        # already-registered device must keep using its persisted token.
         existing_token = db.query(AgentToken).filter(
             AgentToken.relay_id == relay.id,
             AgentToken.agent_name == agent_name,
         ).first()
-        token_str = existing_token.token if existing_token else RelayService.create_agent_token(
-            db, relay.id, agent_name
-        )
-        db.commit()
+        token_str = None
+        if not existing_token:
+            token_str = RelayService.create_agent_token(db, relay.id, agent_name)
+            db.commit()
 
         return {
             "status": "joined",
             "relay_id": relay.id,
             "token": token_str,
+            "credential_status": "unchanged" if existing_token else "issued",
             "agent_name": agent_name,
             "device_id": device_id,
             "agents": relay.agent_names,
@@ -157,6 +167,19 @@ async def register_agent(
         if agent_name not in relay.agent_names:
             relay.agent_names = relay.agent_names + [agent_name]
             relay.agent_count = len(relay.agent_names)
+
+        existing_token = db.query(AgentToken).filter(
+            AgentToken.relay_id == relay.id,
+            AgentToken.agent_name == agent_name,
+        ).first()
+        if existing_token:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Participant already has a credential; use the existing "
+                    "device credential or a creator-issued rotation flow"
+                ),
+            )
 
         # Register this agent
         reg = AgentRegistration(
@@ -330,7 +353,7 @@ async def get_agent_profile(
 
 @router.get("/relays/code/{join_code}")
 async def get_relay_by_code(join_code: str, db: Session = Depends(get_db)):
-    """Look up a relay by its short join code."""
+    """Look up a relay by its legacy relay-wide pairing code."""
     relay = db.query(Relay).filter(Relay.join_code == join_code.upper()).first()
     if not relay:
         raise HTTPException(status_code=404, detail="Invalid join code")
@@ -354,10 +377,16 @@ async def join_by_code(
     agent_name: str,
     db: Session = Depends(get_db),
 ):
-    """Join a relay using a short join code. Returns relay info and a token.
+    """Join using legacy relay-wide pairing material.
 
     The join code acts as authorization -- knowing the code grants access.
     """
+    if not settings.allow_legacy_shared_pairing:
+        raise HTTPException(
+            status_code=410,
+            detail="Relay-wide pairing is disabled; redeem a named invitation",
+        )
+
     # Validate agent_name length
     if not agent_name or len(agent_name) > 100:
         raise HTTPException(
@@ -384,8 +413,12 @@ async def join_by_code(
 
     if existing_token:
         raise HTTPException(status_code=409, detail="Participant already paired; create a new invitation to rotate credentials")
-    token_str = RelayService.create_agent_token(db, relay.id, agent_name)
-    db.commit()
+    try:
+        token_str = RelayService.create_agent_token(db, relay.id, agent_name)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Participant already has a credential")
 
     current_turn = (
         agent_names[relay.current_turn]

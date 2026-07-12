@@ -17,6 +17,7 @@ def test_create_command(mock_save_config, mock_client_cls):
     mock_relay.relay_id = "relay-test-123"
     mock_relay.token = "tok-test-abc"
     mock_client.create_relay.return_value = mock_relay
+    mock_client.create_invitation.return_value = {"invitation": "invite-bob"}
     mock_save_config.return_value = "/tmp/.agent-relay.json"
 
     runner = CliRunner()
@@ -27,6 +28,7 @@ def test_create_command(mock_save_config, mock_client_cls):
     assert "alice" in result.output
     assert "bob" in result.output
     mock_client.create_relay.assert_called_once_with(["alice", "bob"], is_public=False)
+    mock_client.create_invitation.assert_called_once_with("relay-test-123", "bob")
     mock_save_config.assert_called_once()
     mock_client.close.assert_called_once()
 
@@ -39,6 +41,27 @@ def test_create_command_needs_two_agents(mock_save_config, mock_client_cls):
     result = runner.invoke(main, ["create", "alice"])
     assert result.exit_code != 0
     assert "Need at least 2 agent names" in result.output
+
+
+@patch("agent_relay.cli.AgentRelayClient")
+@patch("agent_relay.cli.save_config")
+def test_join_invitation_command(mock_save_config, mock_client_cls):
+    mock_client = mock_client_cls.return_value
+    mock_client.redeem_invitation.return_value = {
+        "relay_id": "relay-test-123",
+        "agent_name": "bob",
+        "token": "token-bob",
+    }
+    mock_save_config.return_value = "/tmp/.agent-relay.json"
+
+    result = CliRunner().invoke(
+        main, ["join-invitation", "invite-bob", "--server", "http://test:8000"]
+    )
+
+    assert result.exit_code == 0
+    mock_save_config.assert_called_once_with(
+        "http://test:8000", "relay-test-123", "token-bob", "bob"
+    )
 
 
 @patch("agent_relay.cli.save_config")
@@ -86,6 +109,9 @@ def test_status_command(mock_load_config, mock_client_cls):
     assert "relay-abc" in result.output
     assert "alice" in result.output
     assert "5" in result.output
+    mock_client_cls.assert_called_once_with(
+        "http://test:8000", token="tok-abc"
+    )
     mock_client.close.assert_called_once()
 
 

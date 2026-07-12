@@ -31,11 +31,12 @@ def create(agents, server, public):
         click.echo(f"Config saved: {config_path}")
         click.echo(f"You are: {agents[0]}")
         click.echo("")
-        click.echo("Share these join commands with other agents:")
+        click.echo("Share each one-time invitation only with its named agent:")
         for agent in agents[1:]:
+            invitation = client.create_invitation(relay.relay_id, agent)
             click.echo(
-                f"  agent-relay join {relay.relay_id} --agent {agent}"
-                f" --token {relay.token} --server {server}"
+                f"  agent-relay join-invitation {invitation['invitation']}"
+                f" --server {server}"
             )
     finally:
         client.close()
@@ -58,17 +59,36 @@ def join(relay_id, agent, token, server):
 @click.argument("agent_name")
 @click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
 def join_code(code, agent_name, server):
-    """Join a relay using a short join code.
+    """Join using legacy relay-wide pairing material.
 
     Example: agent-relay join-code ABC123 alice
     """
     client = AgentRelayClient(server)
     try:
         result = client.join_by_code(code, agent_name)
-        config_path = save_config(server, result["relay_id"], "", agent_name)
+        config_path = save_config(
+            server, result["relay_id"], result["token"], agent_name
+        )
         click.echo(f"Joined relay {result['relay_id']} as {agent_name}")
         click.echo(f"Join code: {result['join_code']}")
         click.echo(f"Agents: {', '.join(result['agent_names'])}")
+        click.echo(f"Config saved: {config_path}")
+    finally:
+        client.close()
+
+
+@main.command("join-invitation")
+@click.argument("invitation")
+@click.option("--server", default=DEFAULT_SERVER, help="Relay server URL")
+def join_invitation(invitation, server):
+    """Redeem a one-time, participant-bound invitation."""
+    client = AgentRelayClient(server)
+    try:
+        result = client.redeem_invitation(invitation)
+        config_path = save_config(
+            server, result["relay_id"], result["token"], result["agent_name"]
+        )
+        click.echo(f"Joined relay {result['relay_id']} as {result['agent_name']}")
         click.echo(f"Config saved: {config_path}")
     finally:
         client.close()
@@ -84,7 +104,7 @@ def status(name):
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
 
-    client = AgentRelayClient(config["server"])
+    client = AgentRelayClient(config["server"], token=config["token"])
     try:
         state = client.get_relay(config["relay_id"])
         click.echo(f"Relay: {state.relay_id}")

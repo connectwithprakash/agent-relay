@@ -94,6 +94,8 @@ class AgentRelayClient:
         agent: str | None = None,
         token: str | None = None,
         message_type: str = "text",
+        idempotency_key: str | None = None,
+        expected_version: int | None = None,
     ) -> SendResult:
         """Send a message in a relay (only works when it's the agent's turn).
 
@@ -105,13 +107,19 @@ class AgentRelayClient:
                 of the client-level token for this request only.
             message_type: Message type - "text", "question", "action-item",
                 "decision", "code", or "bug-report". Defaults to "text".
+            idempotency_key: Stable key that makes retries return the original message.
+            expected_version: Relay version observed before sending. Stale sends fail.
         """
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        body = {"content": content, "type": message_type}
+        body: dict[str, object] = {"content": content, "type": message_type}
         if agent:
             body["agent"] = agent
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
+        if expected_version is not None:
+            body["expected_version"] = expected_version
         resp = self._request(
             "POST", f"/relays/{relay_id}/messages",
             json=body,
@@ -250,13 +258,44 @@ class AgentRelayClient:
             time.sleep(poll_interval)
         raise TimeoutError(f"Timed out waiting for {agent}'s turn after {timeout}s")
 
-    # -- Join code operations --
+    # -- Participant pairing operations --
+
+    def create_invitation(
+        self,
+        relay_id: str,
+        agent_name: str,
+        expires_in_seconds: int = 900,
+    ) -> dict:
+        """Create a creator-authorized, one-time invitation for one participant."""
+        resp = self._request(
+            "POST",
+            f"/relays/{relay_id}/invitations",
+            params={
+                "agent_name": agent_name,
+                "expires_in_seconds": expires_in_seconds,
+            },
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
+    def redeem_invitation(self, invitation: str) -> dict:
+        """Redeem a participant-bound invitation and store the issued token."""
+        resp = self._request(
+            "POST", f"/pairing-invitations/{invitation}/redeem"
+        )
+        _raise_for_status(resp)
+        result = resp.json()
+        self._token = result["token"]
+        self._update_auth_header()
+        return result
+
+    # -- Compatibility join-code operations --
 
     def join_by_code(self, join_code: str, agent_name: str) -> dict:
-        """Join a relay using a short join code.
+        """Join using relay-wide compatibility pairing material.
 
         Args:
-            join_code: The 6-character code (e.g. 'ABC123').
+            join_code: High-entropy relay-wide compatibility pairing material.
             agent_name: Name of the agent joining.
 
         Returns:
@@ -276,10 +315,10 @@ class AgentRelayClient:
         return result
 
     def get_relay_by_code(self, join_code: str) -> dict:
-        """Look up a relay by its short join code.
+        """Look up a relay by its compatibility pairing material.
 
         Args:
-            join_code: The 6-character code.
+            join_code: High-entropy relay-wide compatibility pairing material.
 
         Returns:
             Dict with relay_id, agent_names, current_turn, and join_code.

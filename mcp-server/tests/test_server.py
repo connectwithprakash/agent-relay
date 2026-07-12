@@ -17,6 +17,8 @@ from agent_relay_mcp.server import (
     relay_read,
     relay_status,
     relay_join_code,
+    relay_create_invitation,
+    relay_redeem_invitation,
     relay_info,
 )
 
@@ -154,6 +156,17 @@ class TestRelayCreate:
 
 class TestRelaySend:
     @patch("agent_relay_mcp.server._client")
+    def test_relay_send_forwards_reliability_controls(self, mock_client):
+        mock_client.post.return_value = _mock_response(SEND_MESSAGE_RESPONSE)
+        relay_send(
+            "r1", "hello", "alice",
+            idempotency_key="send-1", expected_version=4,
+        )
+        body = mock_client.post.call_args.kwargs["json"]
+        assert body["idempotency_key"] == "send-1"
+        assert body["expected_version"] == 4
+
+    @patch("agent_relay_mcp.server._client")
     def test_relay_send_success(self, mock_client):
         mock_client.post.return_value = _mock_response(SEND_MESSAGE_RESPONSE)
         result = relay_send("r1", "hello", "alice")
@@ -207,6 +220,37 @@ class TestRelayRead:
             params={"limit": 10},
             headers={},
         )
+
+    @patch("agent_relay_mcp.server._client")
+    def test_explicit_relay_token_overrides_session_token(self, mock_client):
+        mock_client.get.return_value = _mock_response(HISTORY_RESPONSE)
+        relay_read("r2", token="token-r2")
+        assert mock_client.get.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer token-r2"
+        }
+
+
+class TestPairingInvitations:
+    @patch("agent_relay_mcp.server._client")
+    def test_create_invitation(self, mock_client):
+        mock_client.post.return_value = _mock_response({"invitation": "invite-bob"})
+        result = relay_create_invitation("bob", relay_id="r1", token="creator")
+        assert result["invitation"] == "invite-bob"
+        assert mock_client.post.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer creator"
+        }
+
+    @patch("agent_relay_mcp.server._save_config_file")
+    @patch("agent_relay_mcp.server._client")
+    def test_redeem_invitation_persists_session(self, mock_client, mock_save):
+        mock_client.post.return_value = _mock_response({
+            "relay_id": "r1", "agent_name": "bob", "token": "token-bob"
+        })
+        result = relay_redeem_invitation("invite-bob")
+        assert result["config_saved"] is True
+        assert _session["token"] == "token-bob"
+        mock_save.assert_called_once()
+        _session.clear()
 
 
 class TestRelayStatus:

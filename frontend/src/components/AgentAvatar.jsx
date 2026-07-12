@@ -23,11 +23,13 @@ function hashString(str) {
   return Math.abs(hash);
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function getAgentColor(name) {
   const index = hashString(name) % AGENT_COLORS.length;
   return AGENT_COLORS[index];
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function getAgentBubbleColor(name) {
   const BUBBLE_COLORS = [
     { bg: 'bg-indigo-500', text: 'text-white' },

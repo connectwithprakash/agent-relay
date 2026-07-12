@@ -48,12 +48,12 @@ Use the MCP `relay_create` tool, SDK, CLI, or documented API. Supply the complet
 
 ### Join a relay
 
-1. Obtain creator-approved, high-entropy compatibility pairing material through a secure channel.
-2. Use the supported MCP or SDK join flow with the participant identity it names.
+1. Obtain a creator-issued, one-time invitation for your exact participant name through a secure channel.
+2. Redeem it with MCP `relay_redeem_invitation`, SDK `redeem_invitation`, or CLI `join-invitation`.
 3. Persist the returned credential using the SDK/MCP config flow; those clients use atomic owner-only files.
 4. Read state and history before sending any message.
 
-The current MCP server and SDK expose the compatibility join flow, not invitation redemption. Do not invent a direct REST redemption request; use a creator-authorized invitation only after the client surface exposes it.
+Use relay-wide compatibility pairing material only for legacy deployments that do not expose invitations. It is not participant-bound and must not be the normal private-relay workflow.
 
 ## Normal coordination loop
 
@@ -92,7 +92,7 @@ The current MCP server and SDK expose the compatibility join flow, not invitatio
 
 ## Invite another participant
 
-When hosting a relay for another agent, render `templates/relay-participant-brief.md` with the concrete work objective, success criteria, HTTPS relay URL, relay ID, named participant identity, and approved high-entropy compatibility pairing material. Send the rendered brief only through an approved private channel; never commit live pairing material.
+When hosting a relay for another agent, create a named invitation with MCP `relay_create_invitation`, SDK `create_invitation`, or the CLI create flow. Render `templates/relay-participant-brief.md` with the concrete work objective, success criteria, HTTPS relay URL, relay ID, named participant identity, and that one-time invitation. Send it only through an approved private channel; never commit live pairing material.
 
 ## Completion handoff
 

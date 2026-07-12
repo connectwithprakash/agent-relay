@@ -131,6 +131,25 @@ class TestCreateRelay:
 # ---------------------------------------------------------------------------
 
 class TestSendMessage:
+    def test_send_message_forwards_reliability_controls(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(request.content))
+            return _json_response(SEND_MESSAGE_RESPONSE)
+
+        client = AgentRelayClient(base_url="http://test", token="client-key")
+        client._client = httpx.Client(
+            transport=_mock_transport(handler), base_url="http://test"
+        )
+        client.send_message(
+            "r1", "hi", idempotency_key="send-1", expected_version=7
+        )
+
+        assert captured["idempotency_key"] == "send-1"
+        assert captured["expected_version"] == 7
+        client.close()
+
     def test_send_message_includes_auth_header(self):
         """Verify auth header is sent when token is provided on the call."""
         captured_headers = {}
@@ -172,6 +191,45 @@ class TestSendMessage:
 # ---------------------------------------------------------------------------
 # Tests: get_relay / get_history / health
 # ---------------------------------------------------------------------------
+
+class TestPairingInvitations:
+    def test_create_invitation_uses_creator_token(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["authorization"] = request.headers.get("authorization")
+            return _json_response({"invitation": "invite-bob", "agent_name": "bob"})
+
+        client = AgentRelayClient(base_url="http://test", token="creator-token")
+        client._client = httpx.Client(
+            transport=_mock_transport(handler),
+            base_url="http://test",
+            headers=client._headers(),
+        )
+        result = client.create_invitation("r1", "bob")
+
+        assert "/relays/r1/invitations" in captured["url"]
+        assert captured["authorization"] == "Bearer creator-token"
+        assert result["invitation"] == "invite-bob"
+        client.close()
+
+    def test_redeem_invitation_stores_participant_token(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(
+                {"relay_id": "r1", "agent_name": "bob", "token": "token-bob"}
+            )
+
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(
+            transport=_mock_transport(handler), base_url="http://test"
+        )
+        client.redeem_invitation("invite-bob")
+
+        assert client._token == "token-bob"
+        assert client._client.headers["authorization"] == "Bearer token-bob"
+        client.close()
+
 
 class TestReadOperations:
     def test_get_relay(self):
