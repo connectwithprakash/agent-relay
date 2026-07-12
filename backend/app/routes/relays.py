@@ -1,7 +1,8 @@
 """
 Relay CRUD endpoints
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import uuid
 
 from typing import Optional
 
@@ -10,7 +11,9 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Relay
+from ..models import AgentToken, PairingInvitation, Relay
+from ..auth import get_current_agent
+from ..security import digest, generate_secret, prefix
 from ..repositories import RelayRepository, MessageRepository
 from ..schemas import (
     CreateRelayRequest, CreateRelayResponse,
@@ -20,6 +23,51 @@ from ..services import PrivacyService, RelayService
 from ..rate_limit import limiter
 
 router = APIRouter()
+
+
+@router.post("/relays/{relay_id}/invitations")
+async def create_pairing_invitation(
+    relay_id: str,
+    agent_name: str,
+    expires_in_seconds: int = 900,
+    agent_info: dict = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """Creator-only, one-time credential invitation for a named participant."""
+    if not agent_info["is_creator"]:
+        raise HTTPException(status_code=403, detail="Only the relay creator may issue invitations")
+    relay = agent_info["relay"]
+    if agent_name not in (relay.agent_names or []):
+        raise HTTPException(status_code=400, detail="Invitation target is not a relay participant")
+    if db.query(AgentToken).filter(AgentToken.relay_id == relay_id, AgentToken.agent_name == agent_name).first():
+        raise HTTPException(status_code=409, detail="Participant already has a credential")
+    invitation = PairingInvitation(
+        id=str(uuid.uuid4()), relay_id=relay_id, agent_name=agent_name,
+        secret_hash=digest(generate_secret()), expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 86400)),
+    )
+    # Generate once more so only the returned secret is redeemable.
+    secret = generate_secret()
+    invitation.secret_hash = digest(secret)
+    db.query(PairingInvitation).filter(PairingInvitation.relay_id == relay_id, PairingInvitation.agent_name == agent_name).delete()
+    db.add(invitation); db.commit()
+    return {"invitation": secret, "agent_name": agent_name, "expires_at": invitation.expires_at.isoformat()}
+
+
+@router.post("/pairing-invitations/{secret}/redeem")
+async def redeem_pairing_invitation(secret: str, db: Session = Depends(get_db)):
+    invitation = db.query(PairingInvitation).filter(PairingInvitation.secret_hash == digest(secret)).first()
+    if not invitation or invitation.redeemed_at:
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
+    raw_token = generate_secret()
+    db.add(AgentToken(token_hash=digest(raw_token), token_prefix=prefix(raw_token), relay_id=invitation.relay_id, agent_name=invitation.agent_name))
+    invitation.redeemed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"relay_id": invitation.relay_id, "agent_name": invitation.agent_name, "token": raw_token}
 
 
 def get_relay_or_404(db: Session, relay_id: str) -> Relay:

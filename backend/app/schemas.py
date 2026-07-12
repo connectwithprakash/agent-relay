@@ -67,6 +67,7 @@ class AgentPresenceSchema(BaseModel):
 
 class RelayState(BaseModel):
     relay_id: str
+    version: int = 0
     current_turn: Optional[str] = None
     agent_names: list[str]
     message_count: int
@@ -93,6 +94,7 @@ class SendMessageRequest(BaseModel):
     reply_to: Optional[int] = None  # Message ID to reply to (for threading)
     message_type: str = Field(default="text", pattern=r"^(text|question|action-item|decision|bug-report|code)$")
     idempotency_key: Optional[str] = Field(default=None, max_length=255)
+    expected_version: Optional[int] = Field(default=None, ge=0, description="Relay version observed by the sender; stale commands are rejected.")
 
     @field_validator("data")
     @classmethod

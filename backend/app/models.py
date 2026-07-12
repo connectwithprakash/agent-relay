@@ -2,7 +2,7 @@
 Database models for Agent Relay
 """
 from datetime import datetime, timezone
-from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
+from sqlalchemy import Column, Index, Integer, String, Text, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -15,6 +15,7 @@ class Relay(Base):
     id = Column(String, primary_key=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     current_turn = Column(Integer, default=0)  # Index of agent whose turn it is
+    version = Column(Integer, default=0, nullable=False)  # Optimistic concurrency token
     agent_count = Column(Integer, default=2)
     agent_names = Column(JSON)  # List of agent names
     is_public = Column(Boolean, default=False)  # Privacy control
@@ -42,6 +43,7 @@ class Message(Base):
     __tablename__ = "messages"
     __table_args__ = (
         Index('ix_messages_relay_created', 'relay_id', 'created_at'),
+        UniqueConstraint('relay_id', 'agent_name', 'idempotency_key', name='uq_messages_relay_agent_idempotency'),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -131,7 +133,8 @@ class AgentToken(Base):
     __tablename__ = "agent_tokens"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    token = Column(String, unique=True, nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    token_prefix = Column(String(16), nullable=False, index=True)
     relay_id = Column(String, ForeignKey("relays.id"), nullable=False)
     agent_name = Column(String, nullable=False)
     is_creator = Column(Boolean, default=False)
@@ -165,3 +168,16 @@ class AgentRegistration(Base):
 
     def __repr__(self):
         return f"<AgentRegistration {self.agent_name}@{self.namespace}>"
+
+
+class PairingInvitation(Base):
+    """One-time invitation that can mint a credential only for a named participant."""
+    __tablename__ = "pairing_invitations"
+    id = Column(String, primary_key=True)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=False, index=True)
+    agent_name = Column(String, nullable=False)
+    secret_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    redeemed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('relay_id', 'agent_name', name='uq_pairing_invitation_relay_agent'),)

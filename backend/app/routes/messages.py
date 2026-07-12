@@ -3,13 +3,15 @@ Message endpoints - send and history
 """
 import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from loguru import logger
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from ..auth import get_current_agent
 from ..database import get_db
-from ..models import Relay, Message
+from ..models import AgentToken, Relay, Message
+from ..security import digest
 from ..repositories import MessageRepository
 from ..schemas import (
     SendMessageRequest, SendMessageResponse,
@@ -21,6 +23,18 @@ from ..rate_limit import limiter
 from .relays import get_relay_or_404, _check_and_advance_timeout
 
 router = APIRouter()
+
+def _read_relay(db: Session, relay_id: str, authorization: str | None) -> tuple[Relay, str | None]:
+    relay = get_relay_or_404(db, relay_id)
+    if relay.is_public and not authorization:
+        return relay, None
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token required for private relay")
+    token = db.query(AgentToken).filter(AgentToken.token_hash == digest(authorization[7:]), AgentToken.relay_id == relay_id).first()
+    if not token:
+        raise HTTPException(status_code=403, detail="Token is not valid for this relay")
+    return relay, token.agent_name
+
 
 
 @router.post("/relays/{relay_id}/messages", response_model=SendMessageResponse)
@@ -35,12 +49,8 @@ async def send_message(
     relay = agent_info["relay"]
     relay_id = relay.id
 
-    # Agent name comes from the token; fall back to request body for join-code auth
-    agent_from_token = agent_info["agent_name"]
-    if agent_from_token:
-        agent_override = agent_from_token
-    else:
-        agent_override = req.agent  # join-code fallback
+    # Participant identity is derived exclusively from the authenticated token.
+    agent_override = agent_info["agent_name"]
 
     # Use per-relay lock to prevent race conditions between
     # turn validation, message creation, and turn advancement
@@ -48,12 +58,17 @@ async def send_message(
     with lock:
         # Re-read relay inside lock to get fresh state
         db.refresh(relay)
+        observed_version = relay.version
+        if req.expected_version is not None and req.expected_version != observed_version:
+            raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
 
         # Idempotency check: if a message with this key already exists, return it
         message_repo = MessageRepository(db)
         if req.idempotency_key:
             existing = db.query(Message).filter(
-                Message.idempotency_key == req.idempotency_key
+                Message.relay_id == relay_id,
+                Message.agent_name == agent_override,
+                Message.idempotency_key == req.idempotency_key,
             ).first()
             if existing:
                 agent_names = relay.agent_names or []
@@ -106,8 +121,27 @@ async def send_message(
         )
         message = message_repo.create(message)
 
-        # Switch turn
-        next_turn = RelayService.advance_turn(db, relay, getattr(req, 'next_agent', None))
+        # Switch turn and commit the message plus relay state as one command.
+        next_turn = RelayService.advance_turn(db, relay, getattr(req, 'next_agent', None), commit=False)
+        # Compare-and-swap makes turn ownership safe across worker processes.
+        with db.no_autoflush:
+            result = db.execute(
+                update(Relay)
+                .where(Relay.id == relay_id, Relay.version == observed_version)
+                .values(
+                    current_turn=relay.current_turn,
+                    agent_count=relay.agent_count,
+                    turns_waited=relay.turns_waited,
+                    turn_started_at=relay.turn_started_at,
+                    version=observed_version + 1,
+                )
+            )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
+        db.expire(relay)
+        db.commit()
+        db.refresh(message)
         message_count = message_repo.count_by_relay_id(relay_id)
 
     # Prepare broadcast payload (outside lock)
@@ -155,6 +189,8 @@ async def skip_turn(
         target_agent: Skip this specific agent. If not provided, skips current turn holder.
     """
     relay = agent_info["relay"]
+    if force and not agent_info["is_creator"]:
+        raise HTTPException(status_code=403, detail="Only the relay creator may force-skip a turn")
     relay_id = relay.id
     lock = get_relay_lock(relay_id)
     with lock:
@@ -231,15 +267,12 @@ async def get_message_history(
     relay_id: str,
     limit: int = 50,
     offset: int = 0,
-    owner_id: str = None,
     message_type: str = None,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db)
 ):
     """Get message history. Optionally filter by message_type (e.g. question, action-item)."""
-    relay = get_relay_or_404(db, relay_id)
-
-    if not PrivacyService.check_access(relay, owner_id):
-        raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
+    relay, _ = _read_relay(db, relay_id, authorization)
 
     # Cap limit to prevent excessive queries
     limit = min(limit, 100)
@@ -273,8 +306,9 @@ async def listen_for_messages(
     request: Request,
     relay_id: str,
     since_id: int = 0,
-    agent: str = None,
+    agent: str | None = None,
     limit: int = 20,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     """Non-blocking check for new messages since a given message ID.
@@ -282,7 +316,9 @@ async def listen_for_messages(
     Returns immediately with any messages whose id > since_id.
     Designed for agents to poll quickly between other work without blocking.
     """
-    relay = get_relay_or_404(db, relay_id)
+    relay, authenticated_agent = _read_relay(db, relay_id, authorization)
+    if authenticated_agent is not None:
+        agent = authenticated_agent
 
     # Cap limit to prevent excessive queries
     limit = min(limit, 100)

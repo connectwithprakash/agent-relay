@@ -1,6 +1,7 @@
 """
 Test fixtures and configuration for Agent Relay tests
 """
+import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -10,6 +11,18 @@ from sqlalchemy.pool import StaticPool
 from app.models import Base
 from app.main import app
 from app.database import get_db
+
+
+@pytest.fixture(autouse=True)
+def _main_thread_event_loop():
+    """Provide an event loop for synchronous async tests on Python 3.11+."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        yield loop
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 # In-memory SQLite for testing - use StaticPool to share the same connection

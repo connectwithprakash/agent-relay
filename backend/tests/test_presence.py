@@ -13,7 +13,8 @@ class TestHeartbeat:
         # Send heartbeat for alice
         resp = client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -25,7 +26,8 @@ class TestHeartbeat:
         # Send another heartbeat with different status
         resp2 = client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "composing"},
+            params={"status": "composing"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
         assert resp2.status_code == 200
         data2 = resp2.json()
@@ -33,28 +35,31 @@ class TestHeartbeat:
         # last_seen should be updated (equal or later)
         assert data2["last_seen"] >= data["last_seen"]
 
-    def test_heartbeat_invalid_agent(self, client, sample_relay):
+    def test_heartbeat_ignores_spoofed_agent_parameter(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
         resp = client.post(
             f"/relays/{relay_id}/heartbeat",
             params={"agent": "unknown_agent", "status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
-        assert resp.status_code == 400
-        assert "not in this relay" in resp.json()["detail"]
+        assert resp.status_code == 200
+        assert resp.json()["agent"] == "alice"
 
     def test_heartbeat_invalid_status(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
         resp = client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "invalid"},
+            params={"status": "invalid"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
         assert resp.status_code == 400
         assert "Invalid status" in resp.json()["detail"]
 
-    def test_heartbeat_relay_not_found(self, client):
+    def test_heartbeat_relay_not_found(self, client, sample_relay):
         resp = client.post(
             "/relays/nonexistent/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
         assert resp.status_code == 404
 
@@ -68,11 +73,15 @@ class TestPresenceInRelayStatus:
         # Send heartbeats for both agents
         client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
+        bob_join = client.post(f"/relays/join/{sample_relay['join_code']}?agent_name=bob")
+        assert bob_join.status_code == 200
         client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "bob", "status": "composing"},
+            params={"status": "composing"},
+            headers={"Authorization": f"Bearer {bob_join.json()['token']}"},
         )
 
         # Check relay status
@@ -116,7 +125,8 @@ class TestDisconnectedAfter60s:
         # Send heartbeat for alice
         client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
 
         # Manually backdate alice's last_seen to > 120s ago
@@ -146,7 +156,8 @@ class TestAutoSkipDisconnectedAgent:
         # Send heartbeat for alice (who has the first turn)
         client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
 
         # Verify alice has the turn
@@ -176,7 +187,8 @@ class TestAutoSkipDisconnectedAgent:
         # Send fresh heartbeat for alice
         client.post(
             f"/relays/{relay_id}/heartbeat",
-            params={"agent": "alice", "status": "active"},
+            params={"status": "active"},
+            headers={"Authorization": f"Bearer {sample_relay['token']}"},
         )
 
         # Check relay status - alice should still have the turn

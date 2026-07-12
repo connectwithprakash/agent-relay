@@ -162,16 +162,18 @@ class TestMessageSizeLimits:
 
 class TestPaginationBounds:
 
-    def test_limit_capped_at_100(self, client, relay_id):
-        resp = client.get(f"/relays/{relay_id}/history?limit=500")
+    def test_limit_capped_at_100(self, client, relay_with_key):
+        relay_id, token = relay_with_key
+        resp = client.get(f"/relays/{relay_id}/history?limit=500", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200
         # The endpoint should accept the request; the cap is applied internally.
         # We verify no error and the response is valid.
         data = resp.json()
         assert "messages" in data
 
-    def test_default_limit(self, client, relay_id):
-        resp = client.get(f"/relays/{relay_id}/history")
+    def test_default_limit(self, client, relay_with_key):
+        relay_id, token = relay_with_key
+        resp = client.get(f"/relays/{relay_id}/history", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200
 
 
