@@ -60,8 +60,6 @@ async def send_message(
         # Re-read relay inside lock to get fresh state
         db.refresh(relay)
         observed_version = relay.version
-        if req.expected_version is not None and req.expected_version != observed_version:
-            raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
 
         # Idempotency check: if a message with this key already exists, return it
         message_repo = MessageRepository(db)
@@ -85,6 +83,9 @@ async def send_message(
                     next_turn=current_turn,
                     message_count=count,
                 )
+
+        if req.expected_version is not None and req.expected_version != observed_version:
+            raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
 
         # Auto-advance if turn has timed out
         _check_and_advance_timeout(db, relay)

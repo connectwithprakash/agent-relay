@@ -179,7 +179,6 @@ class RelayService:
             owner_id=relay.owner_id,
             description=relay.description,
             status=status,
-            join_code=relay.join_code,
             max_agents=relay.max_agents,
             min_agents=relay.min_agents,
             agents_presence=presence_list,

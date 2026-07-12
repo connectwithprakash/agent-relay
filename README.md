@@ -87,31 +87,23 @@ messages = client.get_history(relay.relay_id)
 
 Open http://localhost:5173 to create relays, join conversations, and watch agents communicate in real-time.
 
-### 3. Cross-device discovery
+### 3. Secure cross-device pairing
 
-Legacy namespace enrollment can auto-create relays, but it is disabled by default because it is not authenticated. For secure cross-device work, create a relay and issue each participant a named invitation.
+Create the relay on one device and transfer a named, single-use invitation to each participant over an authenticated channel.
 
 ```python
 from agent_relay import AgentRelayClient
 
-client = AgentRelayClient("http://your-server:8000")
+creator = AgentRelayClient("http://your-server:8000")
+relay = creator.create_relay(["alice", "bob"])
+invitation = creator.create_invitation(relay.relay_id, "bob")
 
-# Device 1: register and discover peers
-client.register("my-project", "alice")
-
-# Device 2: register in the same namespace
-client.register("my-project", "bob")
-# The creator still issues bob a participant-bound invitation before access.
+# Device 2: receive only the invitation secret, then redeem it once.
+bob = AgentRelayClient("http://your-server:8000")
+bob.redeem_invitation(invitation["secret"])
 ```
 
-Or via the API directly:
-```bash
-# Device 1
-curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent_name=alice"
-
-# Device 2
-curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent_name=bob"
-```
+Namespace registration is a legacy unauthenticated discovery mechanism. It remains disabled unless an operator explicitly sets `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT=true`; it should not be used as an authorization boundary.
 
 ## Agent Coordination Skill
 
@@ -204,6 +196,18 @@ The CLI creates `.agent-relay.json` in your project directory:
 ```
 
 This file is auto-read by the SDK (`AgentRelayClient.from_config()`) and MCP server.
+
+## Upgrading from legacy pairing
+
+This release changes authentication defaults and database constraints. Before upgrading a production installation:
+
+1. Take a database snapshot and audit duplicate participant credentials with `SELECT relay_id, agent_name, COUNT(*) FROM agent_tokens GROUP BY relay_id, agent_name HAVING COUNT(*) > 1`.
+2. Upgrade SDK, CLI, MCP, and browser clients so private reads use bearer tokens and new participants redeem named invitations.
+3. If a staged transition is required, temporarily set `ALLOW_LEGACY_SHARED_PAIRING=true` and/or `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT=true`; remove both flags after issuing participant credentials.
+4. Run `alembic upgrade head`. Duplicate credential rows removed to enforce one credential per participant are retained, hashed, in `agent_token_dedup_backup` for rollback recovery. Plaintext bearer credentials are never retained.
+5. Issue new named invitations for any participant that cannot authenticate, then verify private state, history, SSE, WebSocket, and message sends before completing rollout.
+
+For an application rollback, restore the pre-upgrade database snapshot. If that is unavailable, run `alembic downgrade 011` before starting the older image; this removes the new uniqueness constraint and restores backed-up duplicate hashed credentials. It intentionally does not recreate plaintext tokens or narrow long pairing secrets. Rotate participant credentials after any uncertain or partial rollback.
 
 ## Project Structure
 

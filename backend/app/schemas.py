@@ -78,7 +78,6 @@ class RelayState(BaseModel):
     owner_id: Optional[str] = None
     description: Optional[str] = None
     status: str = "active"
-    join_code: Optional[str] = None
     max_agents: int = 10
     min_agents: int = 2
     agents_presence: list[AgentPresenceSchema] = []

@@ -104,6 +104,16 @@ def _auth_headers(token: str = "") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def _session_agent_for(relay_id: str, token: str = "") -> str:
+    """Return session identity only for the session relay and credential."""
+    session_token = _session.get("token", "")
+    if relay_id != _session.get("relay_id"):
+        return ""
+    if token and token != session_token:
+        return ""
+    return _session.get("agent", "")
+
+
 def _send_heartbeat(
     relay_id: str = "",
     agent: str = "",
@@ -113,7 +123,7 @@ def _send_heartbeat(
 ) -> None:
     """Send a heartbeat to the relay server (best-effort, errors ignored)."""
     rid = relay_id or _session.get("relay_id", "")
-    ag = agent or _session.get("agent", "")
+    ag = agent or _session_agent_for(rid, token)
     if not rid or not ag:
         return
     try:
@@ -334,7 +344,7 @@ def relay_status(relay_id: str = "", token: str = "") -> dict:
 
         # Indicate whether it's the caller's turn
         current = result.get("current_turn")
-        my_agent = _session.get("agent")
+        my_agent = _session_agent_for(relay_id, token)
         if my_agent and current:
             result["your_turn"] = current == my_agent
 
@@ -347,7 +357,7 @@ def relay_status(relay_id: str = "", token: str = "") -> dict:
             turn_order = []
             for i, a in enumerate(agents):
                 marker = " <- current turn" if a == current else ""
-                you = " (you)" if a == _session.get("agent") else ""
+                you = " (you)" if a == my_agent else ""
                 p = presence_map.get(a)
                 if p:
                     status_msg = f" - {p['status_message']}" if p.get('status_message') else ""
@@ -371,7 +381,7 @@ def relay_info(relay_id: str = "", token: str = "") -> dict:
         relay_id: The relay ID to inspect (defaults to session relay).
     """
     relay_id = relay_id or _session.get("relay_id", "")
-    agent_name = _session.get("agent", "")
+    agent_name = _session_agent_for(relay_id, token)
     if not relay_id:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
 

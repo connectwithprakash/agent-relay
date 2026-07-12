@@ -56,6 +56,7 @@ class TestGetRelayState:
         assert data["relay_id"] == relay_id
         assert data["current_turn"] == "alice"
         assert data["message_count"] == 0
+        assert "join_code" not in data
 
     def test_get_relay_not_found(self, client):
         response = client.get("/relays/nonexistent")
@@ -88,6 +89,22 @@ class TestSendMessage:
             headers=headers,
         )
         assert stale.status_code == 409
+
+    def test_idempotent_retry_wins_over_stale_expected_version(self, client, sample_relay):
+        relay_id = sample_relay["relay_id"]
+        headers = {"Authorization": f"Bearer {sample_relay['token']}"}
+        payload = {
+            "content": "retry-safe",
+            "expected_version": 0,
+            "idempotency_key": "retry-safe-1",
+        }
+
+        first = client.post(f"/relays/{relay_id}/messages", json=payload, headers=headers)
+        retry = client.post(f"/relays/{relay_id}/messages", json=payload, headers=headers)
+
+        assert first.status_code == 200
+        assert retry.status_code == 200
+        assert retry.json() == first.json()
 
     def test_send_message(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]

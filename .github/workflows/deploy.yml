@@ -1,65 +1,21 @@
 name: Deploy to Production
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 jobs:
-  test-backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        working-directory: ./backend
-        run: |
-          pip install -r requirements.txt
-
-      - name: Verify backend starts
-        working-directory: ./backend
-        run: |
-          timeout 10 uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          sleep 5
-          curl --retry 5 --retry-connrefused --retry-delay 1 --fail --show-error http://localhost:8000/health
-
-  test-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci --include=dev
-
-      - name: Build frontend
-        working-directory: ./frontend
-        env:
-          VITE_API_BASE_URL: https://agent-relay-api.fly.dev
-        run: npm run build
-
-      - name: Verify build output
-        working-directory: ./frontend
-        run: |
-          ls -la dist/
-          test -f dist/index.html
-
   deploy-frontend:
-    needs: [test-backend, test-frontend]
+    name: Deploy frontend (or report unconfigured)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check Vercel deployment configuration
         id: deployment_configuration
@@ -73,6 +29,8 @@ jobs:
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Vercel deployment skipped::Set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID to enable production deployment."
+            echo "### Vercel deployment skipped — credentials absent" >> "$GITHUB_STEP_SUMMARY"
+            echo "Set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID to enable production deployment." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Deploy to Vercel
@@ -86,11 +44,15 @@ jobs:
           vercel-args: '--prod'
 
   deploy-backend:
-    needs: [test-backend, test-frontend]
+    name: Deploy backend (or report unconfigured)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Check Fly.io deployment configuration
         id: deployment_configuration
@@ -102,6 +64,8 @@ jobs:
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Fly.io deployment skipped::Set FLY_API_TOKEN to enable production deployment."
+            echo "### Fly.io deployment skipped — credentials absent" >> "$GITHUB_STEP_SUMMARY"
+            echo "Set FLY_API_TOKEN to enable production deployment." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Deploy to Fly.io
