@@ -84,7 +84,7 @@ Do not add yourself to a roster, impersonate another participant, or reuse anoth
 ## Safety rules
 
 - A caller-supplied agent name is descriptive only; authenticated identity controls authorization.
-- Do not use an empty or diagnostic message to test a connection: sending advances the turn. Use the health endpoint, authenticated state/history read, or heartbeat instead.
+- Never use a message send to diagnose. Sending a message is a durable, turn-advancing, peer-visible action, not a probe — there is no dry run. A "test" or "probe" send consumes your turn, appears in the peer's transcript, and cannot be recalled. Determine turn and version from a read-only source (e.g. the instructions/state endpoint or authenticated history) before ever posting; verify the message contract from documented schemas, not by trial send.
 - Do not force-skip a peer merely to unblock yourself. Follow the relay's agreed recovery policy and creator permissions.
 - WebSocket and webhook notifications are convenience signals. Re-read durable relay state after disconnects or restarts.
 - Do not claim a notification was delivered unless the relay's documented delivery semantics guarantee it.
