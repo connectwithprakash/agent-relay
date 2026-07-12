@@ -10,26 +10,18 @@ from urllib.parse import urlparse
 from ..config import settings
 
 
-# Private IP ranges that should be blocked in production
-_BLOCKED_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),       # Loopback
-    ipaddress.ip_network("10.0.0.0/8"),         # Private Class A
-    ipaddress.ip_network("172.16.0.0/12"),      # Private Class B
-    ipaddress.ip_network("192.168.0.0/16"),     # Private Class C
-    ipaddress.ip_network("169.254.0.0/16"),     # Link-local
-    ipaddress.ip_network("0.0.0.0/8"),          # Current network
-]
-
 _BLOCKED_HOSTNAMES = {"localhost"}
 
 
 def _is_private_ip(ip_str: str) -> bool:
-    """Check if an IP address falls within a blocked private range."""
+    """Return whether an address is unsafe as an outbound webhook target."""
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
-    return any(addr in network for network in _BLOCKED_NETWORKS)
+    # is_global covers both address families and rejects loopback, private,
+    # link-local, unspecified, multicast, reserved, and IPv4-mapped variants.
+    return not addr.is_global
 
 
 def validate_webhook_url(url: str) -> bool:

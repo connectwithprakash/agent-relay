@@ -61,6 +61,18 @@ class TestWebhookUrlValidation:
     def test_blocks_0_0_0_0(self):
         assert validate_webhook_url("http://0.0.0.0/hook") is False
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://[::1]/hook",
+            "http://[fc00::1]/hook",
+            "http://[fe80::1]/hook",
+            "http://[::ffff:127.0.0.1]/hook",
+        ],
+    )
+    def test_blocks_non_global_ipv6_targets(self, url):
+        assert validate_webhook_url(url) is False
+
     def test_blocks_empty_url(self):
         assert validate_webhook_url("") is False
 
