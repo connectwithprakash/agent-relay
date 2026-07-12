@@ -129,6 +129,24 @@ class TestDeliverWebhook:
         assert deliveries[0].status == "success"
         assert deliveries[0].attempts == 1
 
+    def test_deliver_webhook_revalidates_target_before_connecting(
+        self, db_session, webhook, message
+    ):
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+
+        with patch("app.services.webhook_service._get_client", return_value=mock_client), \
+             patch("app.services.webhook_service.validate_webhook_url", return_value=False), \
+             patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
+             patch.object(db_session, "close"):
+            asyncio.get_event_loop().run_until_complete(
+                WebhookService.deliver_webhook(webhook, message)
+            )
+
+        mock_client.post.assert_not_called()
+        delivery = db_session.query(WebhookDelivery).one()
+        assert delivery.status == "failed"
+        assert "public address" in delivery.error_message
+
     def test_deliver_webhook_retry(self, db_session, webhook, message):
         """Failed attempts should be retried with exponential backoff."""
         mock_client = AsyncMock(spec=httpx.AsyncClient)

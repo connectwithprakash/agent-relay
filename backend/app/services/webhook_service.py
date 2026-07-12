@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Relay, Message, Webhook, WebhookDelivery
 from ..database import SessionLocal
+from ..utils.url_validator import validate_webhook_url
 
 
 # Shared httpx client with connection pooling to avoid per-request client overhead
@@ -65,6 +66,15 @@ class WebhookService:
         client = _get_client()
         for attempt in range(1, settings.webhook_max_retries + 1):
             try:
+                # Resolve and validate again immediately before every connection.
+                # Registration-time checks alone are vulnerable to DNS changes.
+                if not validate_webhook_url(webhook.url):
+                    await WebhookService._log_delivery(
+                        webhook.id, message.id, "failed", attempt,
+                        "Webhook URL no longer resolves to a public address",
+                    )
+                    logger.warning("Blocked unsafe webhook target {}", webhook.id)
+                    return
                 response = await client.post(webhook.url, json=payload)
 
                 if 200 <= response.status_code < 300:
