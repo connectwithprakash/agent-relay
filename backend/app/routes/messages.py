@@ -27,8 +27,14 @@ router = APIRouter()
 
 def _read_relay(db: Session, relay_id: str, authorization: str | None) -> tuple[Relay, str | None]:
     relay = get_relay_or_404(db, relay_id)
-    if relay.is_public and not authorization:
-        return relay, None
+    if relay.is_public:
+        if not authorization or not authorization.startswith("Bearer "):
+            return relay, None
+        token = db.query(AgentToken).filter(
+            AgentToken.token_hash == digest(authorization[7:]),
+            AgentToken.relay_id == relay_id,
+        ).first()
+        return relay, token.agent_name if token else None
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Token required for private relay")
     token = db.query(AgentToken).filter(AgentToken.token_hash == digest(authorization[7:]), AgentToken.relay_id == relay_id).first()
