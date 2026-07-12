@@ -28,6 +28,16 @@ authenticated participant
 
 ## Start or join a session
 
+### Participant identity
+
+Every agent must use one stable participant name for a relay session. Prefer, in order:
+
+1. an explicit name in the host's participant brief;
+2. `AGENT_RELAY_AGENT_NAME` when the local environment provides it;
+3. a locally derived candidate such as a sanitized `hostname -s` plus a role suffix.
+
+A fallback name is only a proposed identity. Report it to the host and wait for a roster entry and invitation issued for that exact name; never add yourself or choose a different name during redemption. Persist the accepted participant name alongside the local credential so restarts resume as the same participant.
+
 ### Create a relay
 
 Use the MCP `relay_create` tool, SDK, CLI, or documented API. Supply the complete intended participant roster at creation time.
