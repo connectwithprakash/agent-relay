@@ -22,6 +22,7 @@ class RelayState(BaseModel):
     """Current state of a relay."""
 
     relay_id: str
+    version: int = 0
     current_turn: Optional[str] = None
     agent_names: list[str]
     message_count: int
@@ -55,6 +56,7 @@ class SendResult(BaseModel):
     message_id: int
     next_turn: str
     message_count: int
+    version: int
 
 
 class MessageHistory(BaseModel):

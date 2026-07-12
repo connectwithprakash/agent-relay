@@ -294,11 +294,12 @@ async def discover_agents(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Discover all agents and relays in a namespace.
-
-    By default, device_id is omitted from responses for privacy.
-    Pass include_device_id=true (for admin use) to include it.
-    """
+    """Discover agents and relays without exposing enrollment credentials."""
+    if include_device_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Device identifiers are not publicly discoverable",
+        )
     base_query = db.query(AgentRegistration).filter(
         AgentRegistration.namespace == namespace,
     )
@@ -321,8 +322,6 @@ async def discover_agents(
             "status": r.status,
             "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
         }
-        if include_device_id:
-            agent_data["device_id"] = r.device_id
         agents_list.append(agent_data)
 
     return {
@@ -442,7 +441,12 @@ async def agent_heartbeat(
     device_id: str,
     db: Session = Depends(get_db),
 ):
-    """Update agent heartbeat to mark the agent as online."""
+    """Update a legacy registry heartbeat when enrollment is enabled."""
+    if not settings.allow_unauthenticated_registry_enrollment:
+        raise HTTPException(
+            status_code=410,
+            detail="Unauthenticated registry enrollment is disabled",
+        )
     reg = db.query(AgentRegistration).filter(
         AgentRegistration.namespace == namespace,
         AgentRegistration.agent_name == agent_name,

@@ -177,7 +177,13 @@ def register(namespace, agent_name, server, description, capabilities, wait, tim
         if wait:
             click.echo("Waiting for other agents to join...")
             try:
-                result = client.wait_for_relay(namespace, agent_name, timeout=timeout)
+                result = client.wait_for_relay(
+                    namespace,
+                    agent_name,
+                    timeout=timeout,
+                    description=description or None,
+                    capabilities=capabilities or None,
+                )
             except TimeoutError:
                 click.echo("Timed out waiting for other agents.", err=True)
                 raise SystemExit(1)
@@ -222,8 +228,7 @@ def discover(namespace, server):
             desc_str = f" - {agent['description']}" if agent.get("description") else ""
             click.echo(
                 f"  {status_icon} {agent['agent_name']}"
-                f" ({agent['status']}) on {agent['device_id']}"
-                f"{desc_str}{caps_str}"
+                f" ({agent['status']}){desc_str}{caps_str}"
             )
     finally:
         client.close()

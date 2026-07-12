@@ -110,6 +110,15 @@ class TestWebhookEndpointValidation:
         assert resp.status_code == 200
         assert resp.json()["url"] == "https://hooks.example.com/relay"
 
+    def test_register_webhook_rejects_another_participant(self, client, relay_with_key):
+        relay_id, token = relay_with_key
+        resp = client.post(
+            f"/relays/{relay_id}/webhooks",
+            json={"url": "https://hooks.example.com/relay", "agent": "bob"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
 
 # ---------------------------------------------------------------------------
 # P1-7  Message Size Limits

@@ -169,3 +169,48 @@ def test_upgrade_hashes_and_removes_legacy_plaintext_tokens(tmp_path):
         ).one()
     assert row.token_hash == hashlib.sha256(raw_token.encode()).hexdigest()
     assert row.token_prefix == raw_token[:12]
+
+
+def test_upgrade_deduplicates_and_restores_legacy_plaintext_credentials(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'duplicate-plaintext.db'}"
+    _upgrade(database_url, "010")
+    engine = create_engine(database_url)
+    tokens = ["older-legacy-token", "newer-legacy-token"]
+    now = datetime.now(timezone.utc)
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE agent_tokens ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "token VARCHAR NOT NULL, relay_id VARCHAR NOT NULL, "
+                "agent_name VARCHAR NOT NULL, is_creator BOOLEAN NOT NULL DEFAULT 0, "
+                "created_at DATETIME NOT NULL)"
+            )
+        )
+        for index, token in enumerate(tokens):
+            connection.execute(
+                text(
+                    "INSERT INTO agent_tokens "
+                    "(token, relay_id, agent_name, is_creator, created_at) "
+                    "VALUES (:token, 'legacy-relay', 'alice', 1, :created_at)"
+                ),
+                {"token": token, "created_at": now.replace(microsecond=index)},
+            )
+
+    _upgrade(database_url, "head")
+    with engine.connect() as connection:
+        active = connection.execute(
+            text("SELECT token_hash FROM agent_tokens")
+        ).scalars().all()
+    assert active == [hashlib.sha256(tokens[-1].encode()).hexdigest()]
+
+    _downgrade(database_url, "011")
+    with engine.connect() as connection:
+        restored = connection.execute(
+            text("SELECT token_hash FROM agent_tokens")
+        ).scalars().all()
+    assert set(restored) == {
+        hashlib.sha256(token.encode()).hexdigest() for token in tokens
+    }
+

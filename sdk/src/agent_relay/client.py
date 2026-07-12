@@ -30,6 +30,8 @@ class AgentRelayClient:
         token: str | None = None,
         max_retries: int = 3,
     ):
+        if max_retries < 1:
+            raise ValueError("max_retries must be at least 1")
         self.base_url = base_url.rstrip("/")
         self._token = token
         self.max_retries = max_retries
@@ -423,6 +425,8 @@ class AgentRelayClient:
         agent_name: str,
         poll_interval: float = 3.0,
         timeout: float = 300.0,
+        description: str | None = None,
+        capabilities: str | None = None,
     ) -> dict:
         """Register and poll until a relay is created in this namespace.
 
@@ -438,7 +442,12 @@ class AgentRelayClient:
         Raises:
             TimeoutError: If no relay is created within *timeout* seconds.
         """
-        result = self.register(namespace, agent_name)
+        result = self.register(
+            namespace,
+            agent_name,
+            description=description,
+            capabilities=capabilities,
+        )
         if result["status"] in ("joined", "created"):
             return result
 
@@ -448,7 +457,13 @@ class AgentRelayClient:
             time.sleep(poll_interval)
             disc = self.discover(namespace)
             if disc.get("relay_id"):
-                result = self.register(namespace, agent_name, device_id)
+                result = self.register(
+                    namespace,
+                    agent_name,
+                    device_id,
+                    description=description,
+                    capabilities=capabilities,
+                )
                 if result["status"] in ("joined", "created"):
                     return result
         raise TimeoutError(

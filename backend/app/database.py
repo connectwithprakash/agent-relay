@@ -24,7 +24,7 @@ def _build_engine():
         kwargs["pool_pre_ping"] = True
 
     kwargs["connect_args"] = connect_args
-    return create_engine(settings.database_url, **kwargs)
+    return create_engine(settings.sqlalchemy_database_url, **kwargs)
 
 
 engine = _build_engine()

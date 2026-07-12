@@ -7,35 +7,32 @@ on:
 
 jobs:
   deploy-frontend:
-    name: Deploy frontend (or report unconfigured)
+    name: Deploy frontend
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Check Vercel deployment configuration
-        id: deployment_configuration
+      - name: Require Vercel deployment configuration
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: |
-          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Vercel deployment skipped::Set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID to enable production deployment."
-            echo "### Vercel deployment skipped — credentials absent" >> "$GITHUB_STEP_SUMMARY"
-            echo "Set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID to enable production deployment." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ] || [ -z "$VITE_API_BASE_URL" ]; then
+            echo "::error::Production deployment requires VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID, and the VITE_API_BASE_URL repository variable."
+            exit 1
           fi
 
       - name: Deploy to Vercel
-        if: steps.deployment_configuration.outputs.configured == 'true'
-        uses: amondnet/vercel-action@v25
+        uses: amondnet/vercel-action@16e87c0a08142b0d0d33b76aeaf20823c381b9b9 # v25
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
@@ -44,36 +41,29 @@ jobs:
           vercel-args: '--prod'
 
   deploy-backend:
-    name: Deploy backend (or report unconfigured)
+    name: Deploy backend
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Check Fly.io deployment configuration
-        id: deployment_configuration
+      - name: Require Fly.io deployment configuration
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          if [ -n "$FLY_API_TOKEN" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Fly.io deployment skipped::Set FLY_API_TOKEN to enable production deployment."
-            echo "### Fly.io deployment skipped — credentials absent" >> "$GITHUB_STEP_SUMMARY"
-            echo "Set FLY_API_TOKEN to enable production deployment." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::Production deployment requires FLY_API_TOKEN."
+            exit 1
           fi
 
-      - name: Deploy to Fly.io
-        if: steps.deployment_configuration.outputs.configured == 'true'
+      - name: Install Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1 / 1.6
 
       - name: Deploy
-        if: steps.deployment_configuration.outputs.configured == 'true'
         working-directory: ./backend
         run: flyctl deploy --remote-only
         env:

@@ -22,6 +22,7 @@ class TestForceSkipTurn:
         # Verify alice has the first turn
         state = client.get(f"/relays/{relay_id}").json()
         assert state["current_turn"] == "alice"
+        assert state["version"] == 0
 
         # Force skip alice's turn (no timeout configured)
         resp = client.post(
@@ -34,6 +35,8 @@ class TestForceSkipTurn:
         assert result["skipped_agent"] == "alice"
         assert result["next_turn"] == "bob"
         assert result["forced"] is True
+        state = client.get(f"/relays/{relay_id}").json()
+        assert state["version"] == 1
 
     def test_skip_returns_who_was_skipped(self, client):
         """Skip response should identify the skipped agent and next agent."""

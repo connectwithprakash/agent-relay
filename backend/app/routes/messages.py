@@ -88,13 +88,20 @@ async def send_message(
                     message_id=existing.id,
                     next_turn=current_turn,
                     message_count=count,
+                    version=relay.version,
                 )
 
         if req.expected_version is not None and req.expected_version != observed_version:
             raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
 
-        # Auto-advance if turn has timed out
-        _check_and_advance_timeout(db, relay)
+        # Timeout advancement is a separate versioned state change. Make the
+        # caller refresh instead of accepting a command against stale ownership.
+        try:
+            timed_out = _check_and_advance_timeout(db, relay)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if timed_out:
+            raise HTTPException(status_code=409, detail="Turn timed out; refresh and retry")
 
         # Validate agent and turn using service
         try:
@@ -146,6 +153,7 @@ async def send_message(
                 return SendMessageResponse(
                     status="ok", message_id=existing.id, next_turn=current_turn,
                     message_count=message_repo.count_by_relay_id(relay_id),
+                    version=relay.version,
                 )
         else:
             message = message_repo.create(message)
@@ -183,18 +191,20 @@ async def send_message(
         "reply_to": message.reply_to,
         "message_type": message.message_type,
         "created_at": message.created_at.isoformat(),
-        "next_turn": next_turn
+        "next_turn": next_turn,
+        "version": observed_version + 1,
     }
 
     # Broadcast via WebSocket and trigger webhooks
     asyncio.create_task(manager.broadcast_message(relay_id, message_dict))
-    asyncio.create_task(WebhookService.trigger_webhooks(db, relay, message, relay.current_turn))
+    await WebhookService.trigger_webhooks(db, relay, message, relay.current_turn)
 
     return SendMessageResponse(
         status="ok",
         message_id=message.id,
         next_turn=next_turn,
-        message_count=message_count
+        message_count=message_count,
+        version=observed_version + 1,
     )
 
 
@@ -244,8 +254,10 @@ async def skip_turn(
                 # Set current turn to the target, then advance past them
                 relay.current_turn = agent_names.index(target_agent)
                 skipped_agent = target_agent
-                db.flush()
-            next_turn = RelayService.advance_turn(db, relay)
+            try:
+                next_turn = RelayService.advance_turn(db, relay)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             return {
                 "status": "ok",
                 "skipped_agent": skipped_agent,
@@ -279,7 +291,10 @@ async def skip_turn(
                 detail=f"Turn has not timed out yet. {remaining:.0f}s remaining."
             )
 
-        next_turn = RelayService.advance_turn(db, relay)
+        try:
+            next_turn = RelayService.advance_turn(db, relay)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "status": "ok",

@@ -61,6 +61,7 @@ SEND_MESSAGE_RESPONSE = {
     "message_id": 1,
     "next_turn": "bob",
     "message_count": 1,
+    "version": 1,
 }
 
 HISTORY_RESPONSE = {

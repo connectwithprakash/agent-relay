@@ -47,7 +47,16 @@ class Settings(BaseSettings):
 
     @property
     def is_postgres(self) -> bool:
-        return self.database_url.startswith("postgresql")
+        return self.database_url.startswith(("postgres://", "postgresql://", "postgresql+"))
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Return a SQLAlchemy URL using the installed psycopg v3 driver."""
+        if self.database_url.startswith("postgres://"):
+            return self.database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
 
 
 settings = Settings()

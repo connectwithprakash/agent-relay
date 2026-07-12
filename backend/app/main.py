@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     if settings.environment == "development":
         init_db()
         logger.info("Database tables created (development mode)")
-    logger.info("Agent Relay %s started (%s)", settings.app_version, settings.environment)
+    logger.info("Agent Relay {} started ({})", settings.app_version, settings.environment)
     yield
     logger.info("Agent Relay shutting down")
 

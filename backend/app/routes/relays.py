@@ -105,12 +105,12 @@ def _authorize_private_read(db: Session, relay: Relay, authorization: str | None
         raise HTTPException(status_code=403, detail="Token is not valid for this relay")
 
 
-def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
-    """If the relay has a turn timeout and it has elapsed, auto-advance the turn."""
+def _check_and_advance_timeout(db: Session, relay: Relay) -> bool:
+    """Advance an elapsed turn and report whether state changed."""
     if relay.turn_timeout is None or relay.turn_started_at is None:
-        return
+        return False
     if not relay.agent_names or relay.agent_count == 0:
-        return
+        return False
     now = datetime.now(timezone.utc)
     started = relay.turn_started_at
     if started.tzinfo is None:
@@ -118,7 +118,9 @@ def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
     elapsed = (now - started).total_seconds()
     if elapsed >= relay.turn_timeout:
         RelayService.advance_turn(db, relay)
-        logger.info("Auto-advanced timed-out turn for relay %s", relay.id)
+        logger.info("Auto-advanced timed-out turn for relay {}", relay.id)
+        return True
+    return False
 
 
 @router.post("/relays", response_model=CreateRelayResponse)
@@ -176,9 +178,6 @@ async def get_relay_state(relay_id: str, authorization: str | None = Header(defa
     """Get current relay state; private relays require a participant token."""
     relay = get_relay_or_404(db, relay_id)
     _authorize_private_read(db, relay, authorization)
-
-    # Auto-advance if turn has timed out
-    _check_and_advance_timeout(db, relay)
 
     return RelayService.get_relay_state(db, relay)
 

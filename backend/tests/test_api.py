@@ -353,7 +353,7 @@ class TestWebhooks:
         # Register a webhook first
         client.post(
             f"/relays/{relay_id}/webhooks",
-            json={"url": "https://example.com/webhook", "agent": "bob"},
+            json={"url": "https://example.com/webhook", "agent": "alice"},
             headers={"Authorization": f"Bearer {token}"},
         )
         response = client.get(
@@ -363,4 +363,4 @@ class TestWebhooks:
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
-        assert data[0]["agent"] == "bob"
+        assert data[0]["agent"] == "alice"

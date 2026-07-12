@@ -71,14 +71,14 @@ class WebhookService:
                     await WebhookService._log_delivery(
                         webhook.id, message.id, "success", attempt
                     )
-                    logger.info("Webhook %d delivered (attempt %d)", webhook.id, attempt)
+                    logger.info("Webhook {} delivered (attempt {})", webhook.id, attempt)
                     return
 
                 if 400 <= response.status_code < 500:
                     # Client error - don't retry, log as failed immediately
                     error_msg = f"HTTP {response.status_code}: client error"
                     logger.warning(
-                        "Webhook %d failed with client error %d, not retrying",
+                        "Webhook {} failed with client error {}, not retrying",
                         webhook.id, response.status_code,
                     )
                     await WebhookService._log_delivery(
@@ -88,7 +88,7 @@ class WebhookService:
 
                 # 5xx server error - retry with backoff
                 error_msg = f"HTTP {response.status_code}: server error"
-                logger.warning("Webhook %d attempt %d got %d", webhook.id, attempt, response.status_code)
+                logger.warning("Webhook {} attempt {} got {}", webhook.id, attempt, response.status_code)
 
                 if attempt >= settings.webhook_max_retries:
                     await WebhookService._log_delivery(
@@ -99,7 +99,7 @@ class WebhookService:
 
             except Exception as e:
                 error_msg = str(e)
-                logger.warning("Webhook %d attempt %d failed: %s", webhook.id, attempt, error_msg)
+                logger.warning("Webhook {} attempt {} failed: {}", webhook.id, attempt, error_msg)
 
                 if attempt >= settings.webhook_max_retries:
                     await WebhookService._log_delivery(

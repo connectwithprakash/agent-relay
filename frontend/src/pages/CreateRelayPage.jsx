@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRelayCreation } from '../hooks';
-import ShareLink from '../components/ShareLink';
 import AgentAvatar from '../components/AgentAvatar';
 import { useToast } from '../components/Toast';
+import { createInvitation } from '../utils/api';
 
 function StepIndicator({ currentStep }) {
   const steps = [
@@ -179,6 +179,20 @@ function CopyableSecret({ label, value, warning }) {
 }
 
 function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
+  const [invitations, setInvitations] = useState({});
+  const [invitationError, setInvitationError] = useState('');
+  const participants = createdRelay.agent_names || createdRelay.agents || agentNames;
+
+  const issueInvitation = async (agent) => {
+    try {
+      setInvitationError('');
+      const result = await createInvitation(createdRelay.relay_id, agent);
+      setInvitations((current) => ({ ...current, [agent]: result.invitation }));
+    } catch (error) {
+      setInvitationError(error.message);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 py-12">
       <StepIndicator currentStep={3} />
@@ -200,7 +214,7 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
 
         {/* Agent avatars */}
         <div className="flex justify-center gap-2 mb-6">
-          {(createdRelay.agent_names || createdRelay.agents || agentNames).map((name) => (
+          {participants.map((name) => (
             <div key={name} className="flex flex-col items-center gap-1">
               <AgentAvatar name={name} size="md" />
               <span className="text-xs text-slate-500 dark:text-slate-400">{name}</span>
@@ -208,25 +222,27 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
           ))}
         </div>
 
-        {/* Join Code */}
-        {createdRelay.join_code && (
-          <div className="text-center mb-6">
-            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Join Code</p>
-            <div className="inline-block px-6 py-3 bg-indigo-50 dark:bg-indigo-950/30 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-xl">
-              <span className="text-3xl font-mono font-bold text-indigo-700 dark:text-indigo-300 tracking-[0.3em]">
-                {createdRelay.join_code}
-              </span>
+        <div className="mb-6 space-y-3">
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Participant Invitations</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Generate a one-time invitation for each participant. They can paste it into the Join Relay field on the home page.
+          </p>
+          {participants.slice(1).map((agent) => (
+            <div key={agent} className="p-3 border border-slate-200 dark:border-slate-700 rounded-xl">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-sm text-slate-900 dark:text-white">{agent}</span>
+                <button type="button" onClick={() => issueInvitation(agent)} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+                  {invitations[agent] ? 'Rotate Invitation' : 'Generate Invitation'}
+                </button>
+              </div>
+              {invitations[agent] && (
+                <button type="button" onClick={() => navigator.clipboard.writeText(invitations[agent])} className="mt-2 w-full text-left font-mono text-xs break-all p-2 bg-slate-100 dark:bg-slate-800 rounded-lg" title="Copy invitation">
+                  {invitations[agent]}
+                </button>
+              )}
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-              Share this code with other agents to join from any device.
-            </p>
-          </div>
-        )}
-
-        {/* Share link */}
-        <div className="mb-6">
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Share Link</p>
-          <ShareLink relayId={createdRelay.relay_id} />
+          ))}
+          {invitationError && <p className="text-xs text-red-600">{invitationError}</p>}
         </div>
 
         {/* Actions */}
@@ -255,7 +271,6 @@ function SuccessView({ createdRelay, agentNames, onGoToRelay, onBackHome }) {
 export default function CreateRelayPage() {
   const navigate = useNavigate();
   const toast = useToast();
-  const [isOpenRelay, setIsOpenRelay] = useState(false);
   const [description, setDescription] = useState('');
   const {
     agentNames,
@@ -276,7 +291,7 @@ export default function CreateRelayPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const result = await submit({ isOpenRelay, description });
+    const result = await submit({ description });
     if (result) {
       toast('Relay created successfully!', 'success');
     }
@@ -313,37 +328,6 @@ export default function CreateRelayPage() {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Relay Mode Tabs */}
-          <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => setIsOpenRelay(false)}
-              className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
-                !isOpenRelay
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
-              }`}
-            >
-              Named Agents
-              <span className={`block text-xs mt-0.5 font-normal ${!isOpenRelay ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                Set agent names now
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsOpenRelay(true)}
-              className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
-                isOpenRelay
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
-              }`}
-            >
-              Open Room
-              <span className={`block text-xs mt-0.5 font-normal ${isOpenRelay ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                Agents join later via code
-              </span>
-            </button>
-          </div>
 
           {/* Description (always visible) */}
           <div>
@@ -360,8 +344,8 @@ export default function CreateRelayPage() {
             />
           </div>
 
-          {/* Step 1: Agent Names (only if not open relay) */}
-          {!isOpenRelay && <div>
+          {/* Step 1: Named participants */}
+          <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xs font-bold">
                 1
@@ -436,7 +420,7 @@ export default function CreateRelayPage() {
                 Add Agent
               </button>
             )}
-          </div>}
+          </div>
 
           {/* Visibility toggle */}
           <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -445,7 +429,7 @@ export default function CreateRelayPage() {
                 Discoverable
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {isPublic ? 'Visible in public relay list' : 'Hidden — only join code works'}
+                {isPublic ? 'Visible in public relay list' : 'Hidden — participants need one-time invitations'}
               </p>
             </div>
             <div className="flex items-center gap-2">

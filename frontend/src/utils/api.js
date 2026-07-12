@@ -105,14 +105,14 @@ export const redeemInvitation = async (invitation) => {
   );
   const result = await handleResponse(response, 'redeem invitation');
   const { storeToken } = await import('./auth.js');
-  storeToken(result.relay_id, result.token);
+  storeToken(result.relay_id, result.token, result.agent_name);
   return result;
 };
 
 /**
  * Send a message to a relay
  */
-export const sendMessage = async (relayId, content, agent = null, token = null) => {
+export const sendMessage = async (relayId, content, agent = null, token = null, options = {}) => {
   const headers = { 'Content-Type': 'application/json' };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -125,6 +125,10 @@ export const sendMessage = async (relayId, content, agent = null, token = null) 
   const body = { content, type: 'text' };
   // Agent name comes from token on the server side, but include if provided for fallback
   if (agent) body.agent = agent;
+  if (options.idempotencyKey) body.idempotency_key = options.idempotencyKey;
+  if (options.expectedVersion !== undefined && options.expectedVersion !== null) {
+    body.expected_version = options.expectedVersion;
+  }
   const response = await safeFetch(`${API_BASE_URL}/relays/${relayId}/messages`, {
     method: 'POST',
     headers,
