@@ -216,6 +216,17 @@ class TestMessageHistory:
         assert data["total_count"] == 0
         assert data["messages"] == []
 
+    def test_public_reads_ignore_stale_bearer_token(self, client, sample_relay):
+        relay_id = sample_relay["relay_id"]
+        headers = {"Authorization": "Bearer stale-token"}
+
+        history = client.get(f"/relays/{relay_id}/history", headers=headers)
+        listen = client.get(f"/relays/{relay_id}/listen", headers=headers)
+
+        assert history.status_code == 200
+        assert listen.status_code == 200
+        assert listen.json()["your_turn"] is None
+
 
 class TestListRelays:
     def test_list_public_relays(self, client, sample_relay):
