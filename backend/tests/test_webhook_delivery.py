@@ -90,7 +90,9 @@ class TestTriggerWebhooks:
         """trigger_webhooks should create an asyncio task for each matching webhook."""
         def capture_task(coro):
             coro.close()
-            return MagicMock()
+            future = asyncio.get_event_loop().create_future()
+            future.set_result(None)
+            return future
         with patch("asyncio.create_task", side_effect=capture_task) as mock_create_task:
             asyncio.get_event_loop().run_until_complete(
                 WebhookService.trigger_webhooks(db_session, relay, message, target_agent_index=1)

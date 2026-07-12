@@ -17,6 +17,7 @@ from ..utils.safe_http_transport import SafeAsyncHTTPTransport
 
 # Shared httpx client with connection pooling to avoid per-request client overhead
 _http_client: Optional[httpx.AsyncClient] = None
+_delivery_tasks: set[asyncio.Task[None]] = set()
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -33,8 +34,10 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def close_http_client() -> None:
-    """Close and reset the process-wide webhook client during shutdown."""
+    """Drain pending deliveries, then close and reset the shared client."""
     global _http_client
+    if _delivery_tasks:
+        await asyncio.gather(*tuple(_delivery_tasks), return_exceptions=True)
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
@@ -57,9 +60,11 @@ class WebhookService:
         ).all()
 
         for webhook in webhooks:
-            asyncio.create_task(
+            task = asyncio.create_task(
                 WebhookService.deliver_webhook(webhook, message)
             )
+            _delivery_tasks.add(task)
+            task.add_done_callback(_delivery_tasks.discard)
 
     @staticmethod
     async def deliver_webhook(webhook: Webhook, message: Message) -> None:
