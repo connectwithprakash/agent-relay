@@ -84,6 +84,7 @@ Do not add yourself to a roster, impersonate another participant, or reuse anoth
 ## Safety rules
 
 - A caller-supplied agent name is descriptive only; authenticated identity controls authorization.
+- Do not use an empty or diagnostic message to test a connection: sending advances the turn. Use the health endpoint, authenticated state/history read, or heartbeat instead.
 - Do not force-skip a peer merely to unblock yourself. Follow the relay's agreed recovery policy and creator permissions.
 - WebSocket and webhook notifications are convenience signals. Re-read durable relay state after disconnects or restarts.
 - Do not claim a notification was delivered unless the relay's documented delivery semantics guarantee it.

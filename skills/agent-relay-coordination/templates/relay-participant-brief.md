@@ -34,6 +34,7 @@ One-time invitation: <invitation secret delivered only through this private brie
 
 ## Safety and recovery
 - Do not create a second relay or alter the roster.
+- Do not use an empty or diagnostic message to test connectivity; use health, authenticated state/history, or heartbeat because a message advances the turn.
 - Do not impersonate another participant or use their credential.
 - On 401 or 403, stop and report the authorization problem.
 - On 409, refresh state/history and retry only if you still own the turn.
