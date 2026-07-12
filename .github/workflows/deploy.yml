@@ -19,7 +19,8 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Require Vercel deployment configuration
+      - name: Check Vercel deployment configuration
+        id: vercel-config
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -27,11 +28,14 @@ jobs:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: |
           if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ] || [ -z "$VITE_API_BASE_URL" ]; then
-            echo "::error::Production deployment requires VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID, and the VITE_API_BASE_URL repository variable."
-            exit 1
+            echo "::notice::Skipping frontend deployment because Vercel deployment configuration is incomplete."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy to Vercel
+        if: steps.vercel-config.outputs.enabled == 'true'
         uses: amondnet/vercel-action@16e87c0a08142b0d0d33b76aeaf20823c381b9b9 # v25
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
@@ -55,19 +59,24 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Require Fly.io deployment configuration
+      - name: Check Fly.io deployment configuration
+        id: fly-config
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
-            echo "::error::Production deployment requires FLY_API_TOKEN."
-            exit 1
+            echo "::notice::Skipping backend deployment because FLY_API_TOKEN is not configured."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Fly.io CLI
+        if: steps.fly-config.outputs.enabled == 'true'
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1 / 1.6
 
       - name: Deploy
+        if: steps.fly-config.outputs.enabled == 'true'
         working-directory: ./backend
         run: flyctl deploy --remote-only
         env:
