@@ -144,8 +144,8 @@ class TestPrivacyService:
 
     def test_check_access_private_no_owner(self):
         relay = MagicMock(is_public=False, owner_id=None)
-        # Legacy: private relay without owner is accessible
-        assert PrivacyService.check_access(relay) is True
+        # A private relay without ownership metadata is never implicitly public.
+        assert PrivacyService.check_access(relay) is False
 
     def test_is_owner(self):
         relay = MagicMock(is_public=False, owner_id="owner-1")

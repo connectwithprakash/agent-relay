@@ -64,11 +64,11 @@ class TestGetRelayState:
     def test_get_private_relay_denied(self, client, private_relay):
         relay_id = private_relay["relay_id"]
         response = client.get(f"/relays/{relay_id}?owner_id=wrong-owner")
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     def test_get_private_relay_by_owner(self, client, private_relay):
         relay_id = private_relay["relay_id"]
-        response = client.get(f"/relays/{relay_id}?owner_id=test-owner")
+        response = client.get(f"/relays/{relay_id}", headers={"Authorization": f"Bearer {private_relay['token']}"})
         assert response.status_code == 200
 
 

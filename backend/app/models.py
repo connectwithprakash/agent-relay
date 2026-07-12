@@ -20,7 +20,7 @@ class Relay(Base):
     agent_names = Column(JSON)  # List of agent names
     is_public = Column(Boolean, default=False)  # Privacy control
     owner_id = Column(String, nullable=True)  # Owner identifier for access control
-    join_code = Column(String(6), unique=True, nullable=True, index=True)  # Short human-readable join code
+    join_code = Column(String(64), unique=True, nullable=True, index=True)  # Short human-readable join code
     turn_timeout = Column(Integer, nullable=True)  # Seconds per turn, None = no timeout
     turn_started_at = Column(DateTime, nullable=True)  # When the current turn began
     description = Column(Text, nullable=True)  # What this relay is for

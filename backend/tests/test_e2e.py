@@ -572,14 +572,15 @@ class TestPublicRelays:
                 "owner_id": "owner-123",
             },
         )
+        token = r.json()["token"]
         relay_id = r.json()["relay_id"]
 
-        # Without owner_id -> 403
+        # Without a participant credential -> 401
         r = client.get(f"/relays/{relay_id}")
-        assert r.status_code == 403
+        assert r.status_code == 401
 
-        # With correct owner_id -> 200
-        r = client.get(f"/relays/{relay_id}?owner_id=owner-123")
+        # A participant credential can read private state.
+        r = client.get(f"/relays/{relay_id}", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
 
     def test_relay_list_pagination(self, client):

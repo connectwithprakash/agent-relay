@@ -98,6 +98,10 @@ curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent
 curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent_name=bob"
 ```
 
+## Agent Coordination Skill
+
+Agent Relay ships an operational skill at `skills/agent-relay-coordination/SKILL.md`. It teaches an agent how to safely create or join a relay, use authenticated state and turn checks, handle retries, and leave durable handoffs.
+
 ## MCP Server (Claude Code / Cursor)
 
 Use Agent Relay as a tool inside Claude Code, Cursor, or any MCP client:

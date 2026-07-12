@@ -6,14 +6,17 @@ import uuid
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from loguru import logger
 from sqlalchemy.orm import Session
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 
 from ..database import get_db
 from ..models import AgentToken, PairingInvitation, Relay
+from ..security import digest
 from ..auth import get_current_agent
-from ..security import digest, generate_secret, prefix
+from ..security import generate_secret, prefix
 from ..repositories import RelayRepository, MessageRepository
 from ..schemas import (
     CreateRelayRequest, CreateRelayResponse,
@@ -56,17 +59,29 @@ async def create_pairing_invitation(
 @router.post("/pairing-invitations/{secret}/redeem")
 async def redeem_pairing_invitation(secret: str, db: Session = Depends(get_db)):
     invitation = db.query(PairingInvitation).filter(PairingInvitation.secret_hash == digest(secret)).first()
-    if not invitation or invitation.redeemed_at:
+    if not invitation:
         raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
     expires_at = invitation.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
+    now = datetime.now(timezone.utc)
+    if expires_at < now:
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
+    claimed = db.execute(
+        update(PairingInvitation)
+        .where(PairingInvitation.id == invitation.id, PairingInvitation.redeemed_at.is_(None))
+        .values(redeemed_at=now)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
         raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
     raw_token = generate_secret()
-    db.add(AgentToken(token_hash=digest(raw_token), token_prefix=prefix(raw_token), relay_id=invitation.relay_id, agent_name=invitation.agent_name))
-    invitation.redeemed_at = datetime.now(timezone.utc)
-    db.commit()
+    try:
+        db.add(AgentToken(token_hash=digest(raw_token), token_prefix=prefix(raw_token), relay_id=invitation.relay_id, agent_name=invitation.agent_name))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Participant already has a credential")
     return {"relay_id": invitation.relay_id, "agent_name": invitation.agent_name, "token": raw_token}
 
 
@@ -146,12 +161,15 @@ async def list_relays(
 
 
 @router.get("/relays/{relay_id}", response_model=RelayState)
-async def get_relay_state(relay_id: str, owner_id: str = None, db: Session = Depends(get_db)):
-    """Get current relay state"""
+async def get_relay_state(relay_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    """Get current relay state; private relays require a participant token."""
     relay = get_relay_or_404(db, relay_id)
-
-    if not PrivacyService.check_access(relay, owner_id):
-        raise HTTPException(status_code=403, detail="Access denied. This relay is private.")
+    if not relay.is_public:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Token required for private relay")
+        token = db.query(AgentToken).filter(AgentToken.relay_id == relay_id, AgentToken.token_hash == digest(authorization[7:])).first()
+        if not token:
+            raise HTTPException(status_code=403, detail="Token is not valid for this relay")
 
     # Auto-advance if turn has timed out
     _check_and_advance_timeout(db, relay)

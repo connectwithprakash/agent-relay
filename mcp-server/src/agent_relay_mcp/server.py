@@ -99,6 +99,11 @@ def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     return {"error": f"Request failed ({status}): {detail}"}
 
 
+def _auth_headers() -> dict[str, str]:
+    token = _session.get("token", "")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active", message: str = "") -> None:
     """Send a heartbeat to the relay server (best-effort, errors ignored)."""
     rid = relay_id or _session.get("relay_id", "")
@@ -112,6 +117,7 @@ def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active",
         _client.post(
             f"/relays/{rid}/heartbeat",
             params=params,
+            headers=_auth_headers(),
         )
     except Exception:
         pass  # Best-effort, never block the caller
@@ -143,6 +149,7 @@ def relay_heartbeat(status: str = "active", message: str = "", relay_id: str = "
         resp = _client.post(
             f"/relays/{relay_id}/heartbeat",
             params=params,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -275,6 +282,7 @@ def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
         resp = _client.get(
             f"/relays/{relay_id}/history",
             params=params,
+            headers=_auth_headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -297,7 +305,7 @@ def relay_status(relay_id: str = "") -> dict:
     _send_heartbeat(relay_id)
 
     try:
-        resp = _client.get(f"/relays/{relay_id}")
+        resp = _client.get(f"/relays/{relay_id}", headers=_auth_headers())
         resp.raise_for_status()
         result = resp.json()
 
@@ -346,7 +354,7 @@ def relay_info(relay_id: str = "") -> dict:
 
     result: dict = {}
     try:
-        resp = _client.get(f"/relays/{relay_id}")
+        resp = _client.get(f"/relays/{relay_id}", headers=_auth_headers())
         resp.raise_for_status()
         status = resp.json()
         result["relay_id"] = relay_id

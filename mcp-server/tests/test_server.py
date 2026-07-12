@@ -205,6 +205,7 @@ class TestRelayRead:
         mock_client.get.assert_called_once_with(
             "/relays/r1/history",
             params={"limit": 10},
+            headers={},
         )
 
 
@@ -214,7 +215,7 @@ class TestRelayStatus:
         mock_client.get.return_value = _mock_response(RELAY_STATE_RESPONSE)
         result = relay_status("test-relay-123")
         assert result["current_turn"] == "alice"
-        mock_client.get.assert_called_once_with("/relays/test-relay-123")
+        mock_client.get.assert_called_once_with("/relays/test-relay-123", headers={})
 
     @patch("agent_relay_mcp.server._session", {"agent": "alice"})
     @patch("agent_relay_mcp.server._client")
