@@ -131,6 +131,9 @@ class AgentPresence(Base):
 class AgentToken(Base):
     """Token-based authentication for agents in a relay"""
     __tablename__ = "agent_tokens"
+    __table_args__ = (
+        UniqueConstraint("relay_id", "agent_name", name="uq_agent_tokens_relay_agent"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     token_hash = Column(String(64), unique=True, nullable=False, index=True)

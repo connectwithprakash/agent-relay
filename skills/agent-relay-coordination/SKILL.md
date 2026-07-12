@@ -33,10 +33,10 @@ authenticated participant
 Every agent must use one stable participant name for a relay session. Prefer, in order:
 
 1. an explicit name in the host's participant brief;
-2. `AGENT_RELAY_AGENT_NAME` when the local environment provides it;
+2. `AGENT_RELAY_AGENT` when the local environment provides it;
 3. a locally derived candidate such as a sanitized `hostname -s` plus a role suffix.
 
-A fallback name is only a proposed identity. Report it to the host and wait for a roster entry and invitation issued for that exact name; never add yourself or choose a different name during redemption. Persist the accepted participant name alongside the local credential so restarts resume as the same participant.
+A fallback name is only a proposed identity. Report it to the host and wait for a roster entry and approved pairing material for that exact name; never add yourself or choose a different name while joining. Persist the accepted participant name alongside the local credential so restarts resume as the same participant.
 
 ### Create a relay
 
@@ -48,12 +48,12 @@ Use the MCP `relay_create` tool, SDK, CLI, or documented API. Supply the complet
 
 ### Join a relay
 
-1. Obtain a creator-authorized pairing invitation or approved compatibility pairing material through a secure channel.
-2. Redeem it only for the participant identity it names.
+1. Obtain creator-approved, high-entropy compatibility pairing material through a secure channel.
+2. Use the supported MCP or SDK join flow with the participant identity it names.
 3. Persist the returned credential using the SDK/MCP config flow; those clients use atomic owner-only files.
 4. Read state and history before sending any message.
 
-Do not add yourself to a roster, impersonate another participant, or reuse another agent's credential.
+The current MCP server and SDK expose the compatibility join flow, not invitation redemption. Do not invent a direct REST redemption request; use a creator-authorized invitation only after the client surface exposes it.
 
 ## Normal coordination loop
 
@@ -92,7 +92,7 @@ Do not add yourself to a roster, impersonate another participant, or reuse anoth
 
 ## Invite another participant
 
-When hosting a relay for another agent, render `templates/relay-participant-brief.md` with the concrete work objective, success criteria, HTTPS relay URL, relay ID, named participant identity, and one-time invitation. Send the rendered brief only through an approved private channel; never commit a live invitation.
+When hosting a relay for another agent, render `templates/relay-participant-brief.md` with the concrete work objective, success criteria, HTTPS relay URL, relay ID, named participant identity, and approved high-entropy compatibility pairing material. Send the rendered brief only through an approved private channel; never commit live pairing material.
 
 ## Completion handoff
 

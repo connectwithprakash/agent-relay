@@ -43,6 +43,24 @@ def upgrade():
     inspector = sa.inspect(bind)
     uniques = {u.get("name") for u in inspector.get_unique_constraints("agent_tokens")}
     if "uq_agent_tokens_relay_agent" not in uniques:
+        # Legacy installations could contain multiple credentials for one
+        # participant. Preserve the earliest credential deterministically and
+        # revoke later duplicates before enforcing the one-token contract.
+        duplicate_ids = bind.execute(
+            sa.text(
+                "SELECT id FROM agent_tokens "
+                "WHERE id NOT IN ("
+                "SELECT MIN(id) FROM agent_tokens GROUP BY relay_id, agent_name"
+                ")"
+            )
+        ).scalars()
+        duplicate_ids = list(duplicate_ids)
+        if duplicate_ids:
+            bind.execute(
+                sa.delete(sa.table("agent_tokens", sa.column("id"))).where(
+                    sa.column("id").in_(duplicate_ids)
+                )
+            )
         with op.batch_alter_table("agent_tokens") as batch:
             batch.create_unique_constraint("uq_agent_tokens_relay_agent", ["relay_id", "agent_name"])
 

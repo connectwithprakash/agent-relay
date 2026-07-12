@@ -100,7 +100,7 @@ curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent
 
 ## Agent Coordination Skill
 
-Agent Relay ships an operational skill at `skills/agent-relay-coordination/SKILL.md`. It teaches an agent how to safely create or join a relay, use authenticated state and turn checks, handle retries, and leave durable handoffs.
+Agent Relay ships operational guidance at `skills/agent-relay-coordination/SKILL.md`; the Claude compatibility skill at `.claude/skills/agent-relay/SKILL.md` follows the same authenticated pairing and recovery boundaries.
 
 ## MCP Server (Claude Code / Cursor)
 

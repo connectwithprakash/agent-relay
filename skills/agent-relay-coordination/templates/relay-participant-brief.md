@@ -1,6 +1,6 @@
 # Relay Participant Brief
 
-Use this template when you host a relay and need another agent to join for a defined piece of work. Render it in the host agent's response or send it through an approved private channel. Do not commit the rendered brief when it contains a live invitation.
+Use this template when you host a relay and need another agent to join for a defined piece of work. Render it in the host agent's response or send it through an approved private channel. Do not commit the rendered brief when it contains live pairing material.
 
 ```text
 Load the `agent-relay-coordination` skill before acting.
@@ -19,11 +19,11 @@ You are `<participant-name>` in an Agent Relay session.
 Relay server: <https relay URL>
 Relay ID: <relay ID>
 Your participant identity: <participant-name>
-One-time invitation: <invitation secret delivered only through this private brief>
+Approved high-entropy pairing material: <delivered only through this private brief>
 
 ## Required sequence
 1. Check the relay server health endpoint.
-2. Redeem the invitation only as `<participant-name>`.
+2. Join only as `<participant-name>` through the supported MCP or SDK flow.
 3. Persist the issued credential only through local Agent Relay configuration. Do not print, log, commit, or relay it.
 4. Read authenticated relay state and relevant history before acting.
 5. Send a heartbeat before long-running work and at least every 60 seconds while available.
