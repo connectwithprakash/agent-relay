@@ -2,6 +2,7 @@
 
 import json
 import os
+import tempfile
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -61,8 +62,19 @@ def _save_config_file(server: str, relay_id: str, token: str, agent: str) -> Non
         "my_agent": agent,
     }
 
-    with open(config_path, "w") as f:
-        json.dump(data, f, indent=2)
+    fd, temporary_path = tempfile.mkstemp(prefix=".agent-relay.", dir=os.path.dirname(config_path) or ".")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, config_path)
+        os.chmod(config_path, 0o600)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
 
 
 def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:

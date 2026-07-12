@@ -1,145 +1,56 @@
-"""
-Tests for the join code cross-device discovery feature
-"""
-import pytest
+"""Tests for the legacy pairing capability and secure participant enrollment."""
 
 
 class TestCreateRelayHasJoinCode:
-    """Verify relays created via POST /relays include a join code."""
-
-    def test_create_relay_has_join_code(self, client):
-        """A newly created relay should contain a 6-char join_code."""
-        resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "join_code" in data
-        assert data["join_code"] is not None
-        assert len(data["join_code"]) == 6
-        assert data["join_code"].isalnum()
-        assert data["join_code"] == data["join_code"].upper()
+    def test_create_relay_has_high_entropy_pairing_capability(self, client):
+        response = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True})
+        assert response.status_code == 200
+        code = response.json()["join_code"]
+        assert len(code) == 48
+        assert code.isalnum()
+        assert code == code.upper()
 
 
-class TestJoinByCode:
-    """Tests for POST /relays/join/{join_code}"""
+class TestLegacyJoinByCode:
+    def test_approved_unpaired_participant_can_pair_once(self, client):
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        response = client.post(f"/relays/join/{created['join_code']}", params={"agent_name": "bob"})
+        assert response.status_code == 200
+        assert response.json()["relay_id"] == created["relay_id"]
+        assert response.json()["token"]
 
-    def test_join_by_code_success(self, client):
-        """Joining with a valid code should return relay info and a token."""
-        # Create relay
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        assert create_resp.status_code == 200
-        join_code = create_resp.json()["join_code"]
-        relay_id = create_resp.json()["relay_id"]
+    def test_unapproved_participant_cannot_mutate_roster(self, client):
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        response = client.post(f"/relays/join/{created['join_code']}", params={"agent_name": "charlie"})
+        assert response.status_code == 403
+        state = client.get(f"/relays/{created['relay_id']}").json()
+        assert state["agent_names"] == ["alice", "bob"]
 
-        # Join by code
-        resp = client.post(
-            f"/relays/join/{join_code}",
-            params={"agent_name": "charlie"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["relay_id"] == relay_id
-        assert data["join_code"] == join_code
-        assert "charlie" in data["agent_names"]
-        assert data["token"] is not None
-        assert len(data["token"]) > 20
+    def test_existing_credential_is_not_revealed_again(self, client):
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        response = client.post(f"/relays/join/{created['join_code']}", params={"agent_name": "alice"})
+        assert response.status_code == 409
 
     def test_join_by_code_invalid(self, client):
-        """Joining with an invalid code should return 404."""
-        resp = client.post(
-            "/relays/join/ZZZZZZ",
-            params={"agent_name": "alice"},
-        )
-        assert resp.status_code == 404
-        assert "Invalid join code" in resp.json()["detail"]
+        response = client.post("/relays/join/ZZZZZZ", params={"agent_name": "alice"})
+        assert response.status_code == 404
 
-    def test_join_by_code_adds_agent(self, client):
-        """Joining should add the agent to the relay's agent list."""
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        join_code = create_resp.json()["join_code"]
-
-        # Join as charlie
-        resp = client.post(
-            f"/relays/join/{join_code}",
-            params={"agent_name": "charlie"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["agent_names"] == ["alice", "bob", "charlie"]
-
-    def test_join_by_code_existing_agent_no_duplicate(self, client):
-        """Joining as an already-present agent should not duplicate the name."""
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        join_code = create_resp.json()["join_code"]
-
-        # Join as alice (already in relay)
-        resp = client.post(
-            f"/relays/join/{join_code}",
-            params={"agent_name": "alice"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["agent_names"] == ["alice", "bob"]
-
-    def test_join_code_case_insensitive(self, client):
-        """Join codes should be case-insensitive."""
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        join_code = create_resp.json()["join_code"]
-        relay_id = create_resp.json()["relay_id"]
-
-        # Join using lowercase
-        resp = client.post(
-            f"/relays/join/{join_code.lower()}",
-            params={"agent_name": "dave"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["relay_id"] == relay_id
+    def test_join_code_case_insensitive_for_approved_participant(self, client):
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        response = client.post(f"/relays/join/{created['join_code'].lower()}", params={"agent_name": "bob"})
+        assert response.status_code == 200
 
 
 class TestGetRelayByCode:
-    """Tests for GET /relays/code/{join_code}"""
-
     def test_get_relay_by_code(self, client):
-        """Looking up a valid code should return relay info."""
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        join_code = create_resp.json()["join_code"]
-        relay_id = create_resp.json()["relay_id"]
-
-        resp = client.get(f"/relays/code/{join_code}")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["relay_id"] == relay_id
-        assert data["join_code"] == join_code
-        assert data["agent_names"] == ["alice", "bob"]
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        response = client.get(f"/relays/code/{created['join_code']}")
+        assert response.status_code == 200
+        assert response.json()["relay_id"] == created["relay_id"]
 
     def test_get_relay_by_code_invalid(self, client):
-        """Looking up an invalid code should return 404."""
-        resp = client.get("/relays/code/XXXXXX")
-        assert resp.status_code == 404
+        assert client.get("/relays/code/XXXXXX").status_code == 404
 
     def test_get_relay_by_code_case_insensitive(self, client):
-        """Code lookup should be case-insensitive."""
-        create_resp = client.post("/relays", json={
-            "agent_names": ["alice", "bob"],
-            "is_public": True,
-        })
-        join_code = create_resp.json()["join_code"]
-
-        resp = client.get(f"/relays/code/{join_code.lower()}")
-        assert resp.status_code == 200
-        assert resp.json()["join_code"] == join_code
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
+        assert client.get(f"/relays/code/{created['join_code'].lower()}").status_code == 200

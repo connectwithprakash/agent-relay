@@ -1,14 +1,13 @@
 """
 Relay service - Business logic for relay operations
 """
-import random
 import secrets
-import string
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
-from ..models import AgentToken, Relay
+from ..models import AgentToken, PairingInvitation, Relay
+from ..security import digest, generate_secret, prefix
 from ..repositories import RelayRepository, MessageRepository, PresenceRepository
 from ..schemas import AgentPresenceSchema, CreateRelayRequest, RelayState
 from loguru import logger
@@ -24,14 +23,14 @@ class RelayService:
 
     @staticmethod
     def generate_join_code() -> str:
-        """Generate a 6-character human-readable join code (e.g. 'ABC123')."""
-        chars = string.ascii_uppercase + string.digits
-        return ''.join(random.choices(chars, k=6))
+        """Generate a high-entropy pairing secret; callers must treat it as a credential."""
+        # Hex is URL-path safe for the legacy join endpoint; unlike a short
+        # human code it still has enough entropy to be a pairing capability.
+        return secrets.token_hex(24).upper()
 
     @staticmethod
     def generate_token() -> str:
-        """Generate a secure agent token."""
-        return secrets.token_urlsafe(32)
+        return generate_secret()
 
     @staticmethod
     def create_agent_token(
@@ -43,7 +42,8 @@ class RelayService:
         """Create and store an agent token. Returns the plaintext token."""
         token_str = RelayService.generate_token()
         agent_token = AgentToken(
-            token=token_str,
+            token_hash=digest(token_str),
+            token_prefix=prefix(token_str),
             relay_id=relay_id,
             agent_name=agent_name,
             is_creator=is_creator,
@@ -82,16 +82,12 @@ class RelayService:
             max_skip_count=request.max_skip_count,
         )
 
-        repo = RelayRepository(db)
-        relay = repo.create(relay)
-
-        # Generate creator token
+        # Relay and creator credential must become visible atomically.
+        db.add(relay)
         creator_name = agent_names[0] if agent_names else "creator"
-        token_str = RelayService.create_agent_token(
-            db, relay_id, creator_name, is_creator=True
-        )
-        db.flush()
-
+        token_str = RelayService.create_agent_token(db, relay_id, creator_name, is_creator=True)
+        db.commit()
+        db.refresh(relay)
         return relay, token_str
 
     @staticmethod
@@ -172,6 +168,7 @@ class RelayService:
 
         return RelayState(
             relay_id=relay.id,
+            version=relay.version,
             current_turn=current_turn,
             agent_names=agent_names,
             message_count=message_count,
@@ -231,7 +228,7 @@ class RelayService:
             )
 
     @staticmethod
-    def advance_turn(db: Session, relay: Relay, next_agent: str = None) -> str:
+    def advance_turn(db: Session, relay: Relay, next_agent: Optional[str] = None, *, commit: bool = True) -> str:
         """Advance turn with optional directed turn and starvation prevention.
 
         If next_agent specified and valid, they go next (unless an agent is starving).
@@ -277,5 +274,8 @@ class RelayService:
 
         relay.turns_waited = turns_waited
         relay.turn_started_at = datetime.now(timezone.utc)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         return agent_names[relay.current_turn]

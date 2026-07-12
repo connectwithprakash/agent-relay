@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import tempfile
 from typing import Optional
 
 CONFIG_FILENAME = ".agent-relay.json"
@@ -73,8 +74,22 @@ def save_config(
         "my_agent": agent,
     }
 
-    with open(config_path, "w") as f:
-        json.dump(data, f, indent=2)
+    # Credentials are local secrets. Write atomically with owner-only access
+    # so a partial write never leaves a readable token file behind.
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=f".{CONFIG_FILENAME}.", dir=config_path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, config_path)
+        os.chmod(config_path, 0o600)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
 
     return config_path
 

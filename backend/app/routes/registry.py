@@ -371,15 +371,10 @@ async def join_by_code(
 
     agent_names = relay.agent_names or []
 
-    # Add agent to relay if not already present
+    # A pairing secret may mint a credential only for a participant selected
+    # when the relay was created. It must never let a caller alter turn order.
     if agent_name not in agent_names:
-        relay.agent_names = agent_names + [agent_name]
-        relay.agent_count = len(relay.agent_names)
-        # Start turn timer if this is transitioning from open to active
-        if not agent_names and relay.turn_started_at is None:
-            relay.turn_started_at = datetime.now(timezone.utc)
-        db.commit()
-        agent_names = relay.agent_names
+        raise HTTPException(status_code=403, detail="Agent is not an approved relay participant")
 
     # Check if a token already exists for this agent in this relay
     existing_token = db.query(AgentToken).filter(
@@ -388,10 +383,9 @@ async def join_by_code(
     ).first()
 
     if existing_token:
-        token_str = existing_token.token
-    else:
-        token_str = RelayService.create_agent_token(db, relay.id, agent_name)
-        db.commit()
+        raise HTTPException(status_code=409, detail="Participant already paired; create a new invitation to rotate credentials")
+    token_str = RelayService.create_agent_token(db, relay.id, agent_name)
+    db.commit()
 
     current_turn = (
         agent_names[relay.current_turn]

@@ -8,6 +8,7 @@ from loguru import logger
 
 from ..database import SessionLocal
 from ..models import AgentToken
+from ..security import digest
 from ..repositories import RelayRepository
 from ..websocket_manager import manager
 
@@ -60,7 +61,7 @@ async def websocket_endpoint(
                 return
 
             agent_token = db.query(AgentToken).filter(
-                AgentToken.token == effective_token
+                AgentToken.token_hash == digest(effective_token)
             ).first()
 
             if not agent_token or agent_token.relay_id != relay_id:

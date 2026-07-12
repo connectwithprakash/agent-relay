@@ -10,6 +10,7 @@ from app.models import AgentToken, Base, Relay
 from app.schemas import CreateRelayRequest
 from app.services.relay_service import RelayService
 from app.services.privacy_service import PrivacyService
+from app.security import digest
 
 
 # In-memory SQLite for service tests
@@ -51,7 +52,7 @@ class TestRelayService:
         assert len(token) > 20
 
         # Verify token is stored in the database
-        agent_token = db.query(AgentToken).filter(AgentToken.token == token).first()
+        agent_token = db.query(AgentToken).filter(AgentToken.token_hash == digest(token)).first()
         assert agent_token is not None
         assert agent_token.relay_id == relay.id
         assert agent_token.agent_name == "alice"
@@ -124,7 +125,7 @@ class TestRelayService:
         db.commit()
         assert len(token_str) > 20
 
-        agent_token = db.query(AgentToken).filter(AgentToken.token == token_str).first()
+        agent_token = db.query(AgentToken).filter(AgentToken.token_hash == digest(token_str)).first()
         assert agent_token is not None
         assert agent_token.agent_name == "bob"
         assert agent_token.is_creator is False

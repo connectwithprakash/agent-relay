@@ -83,8 +83,11 @@ class MessageRepository:
         )
     
     def create(self, message: Message) -> Message:
-        """Create a new message"""
+        """Stage a message in the caller's transaction.
+
+        The relay command owns the commit because appending a message and
+        advancing the relay turn are one state transition.
+        """
         self.db.add(message)
-        self.db.commit()
-        self.db.refresh(message)
+        self.db.flush()
         return message

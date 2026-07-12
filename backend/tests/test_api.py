@@ -73,6 +73,22 @@ class TestGetRelayState:
 
 
 class TestSendMessage:
+    def test_send_message_rejects_stale_relay_version(self, client, sample_relay):
+        relay_id = sample_relay["relay_id"]
+        headers = {"Authorization": f"Bearer {sample_relay['token']}"}
+        first = client.post(
+            f"/relays/{relay_id}/messages",
+            json={"content": "first", "expected_version": 0},
+            headers=headers,
+        )
+        assert first.status_code == 200
+        stale = client.post(
+            f"/relays/{relay_id}/messages",
+            json={"content": "stale", "expected_version": 0},
+            headers=headers,
+        )
+        assert stale.status_code == 409
+
     def test_send_message(self, client, sample_relay):
         relay_id = sample_relay["relay_id"]
         token = sample_relay["token"]

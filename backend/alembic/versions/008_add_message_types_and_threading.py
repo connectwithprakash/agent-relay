@@ -11,16 +11,16 @@ down_revision = "007"
 
 
 def upgrade():
-    op.add_column(
-        "messages",
-        sa.Column("reply_to", sa.Integer(), sa.ForeignKey("messages.id"), nullable=True),
-    )
-    op.add_column(
-        "messages",
-        sa.Column("message_type", sa.String(), server_default="text", nullable=False),
-    )
+    # SQLite cannot add a foreign-key constraint through ALTER TABLE. Batch
+    # mode performs the portable copy-and-swap migration.
+    with op.batch_alter_table("messages") as batch:
+        batch.add_column(sa.Column("reply_to", sa.Integer(), nullable=True))
+        batch.add_column(sa.Column("message_type", sa.String(), server_default="text", nullable=False))
+        batch.create_foreign_key("fk_messages_reply_to", "messages", ["reply_to"], ["id"])
 
 
 def downgrade():
-    op.drop_column("messages", "message_type")
-    op.drop_column("messages", "reply_to")
+    with op.batch_alter_table("messages") as batch:
+        batch.drop_constraint("fk_messages_reply_to", type_="foreignkey")
+        batch.drop_column("message_type")
+        batch.drop_column("reply_to")

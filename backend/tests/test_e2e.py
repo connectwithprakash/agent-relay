@@ -28,7 +28,7 @@ class TestRelayLifecycle:
         assert relay_id
         assert token
         assert join_code is not None
-        assert len(join_code) == 6
+        assert len(join_code) == 48
 
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -197,14 +197,14 @@ class TestJoinCodeFlow:
         relay_id = r.json()["relay_id"]
 
         # Join by code
-        r = client.post(f"/relays/join/{join_code}?agent_name=joiner")
+        r = client.post(f"/relays/join/{join_code}?agent_name=partner")
         assert r.status_code == 200
-        assert "joiner" in r.json()["agent_names"]
+        assert "partner" in r.json()["agent_names"]
         assert r.json()["token"] is not None
 
         # Verify via relay state
         r = client.get(f"/relays/{relay_id}")
-        assert "joiner" in r.json()["agent_names"]
+        assert "partner" in r.json()["agent_names"]
 
     def test_lookup_relay_by_code(self, client):
         """GET /relays/code/{join_code} returns relay info."""
@@ -225,7 +225,7 @@ class TestJoinCodeFlow:
         assert r.status_code == 404
 
     def test_join_idempotent(self, client):
-        """Joining twice with the same agent name does not duplicate it."""
+        """An unapproved participant cannot mutate relay membership."""
         r = client.post(
             "/relays",
             json={"agent_names": ["alpha", "omega"], "is_public": True},
@@ -234,11 +234,13 @@ class TestJoinCodeFlow:
         join_code = r.json()["join_code"]
         relay_id = r.json()["relay_id"]
 
-        client.post(f"/relays/join/{join_code}?agent_name=beta")
-        client.post(f"/relays/join/{join_code}?agent_name=beta")
+        first = client.post(f"/relays/join/{join_code}?agent_name=beta")
+        second = client.post(f"/relays/join/{join_code}?agent_name=beta")
+        assert first.status_code == 403
+        assert second.status_code == 403
 
         r = client.get(f"/relays/{relay_id}")
-        assert r.json()["agent_names"].count("beta") == 1
+        assert r.json()["agent_names"] == ["alpha", "omega"]
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..auth import get_current_agent
 from ..repositories import PresenceRepository
 from ..rate_limit import limiter
 from .relays import get_relay_or_404
@@ -18,20 +19,21 @@ router = APIRouter()
 async def heartbeat(
     request: Request,
     relay_id: str,
-    agent: str,
     status: str = "active",
     status_message: str = None,
+    agent_info: dict = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     """Send a heartbeat to update agent presence.
 
     Args:
         relay_id: The relay to send heartbeat for.
-        agent: The agent name sending the heartbeat.
+        The authenticated participant is the agent sending the heartbeat.
         status: Current status - active, composing, idle.
         status_message: Brief description of what the agent is currently doing.
     """
-    relay = get_relay_or_404(db, relay_id)
+    relay = agent_info["relay"]
+    agent = agent_info["agent_name"]
 
     # Validate agent belongs to this relay
     agent_names = relay.agent_names or []
