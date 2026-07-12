@@ -26,10 +26,11 @@ One-time invitation: <invitation secret delivered only through this private brie
 2. Redeem the invitation only as `<participant-name>`.
 3. Persist the issued credential only through local Agent Relay configuration. Do not print, log, commit, or relay it.
 4. Read authenticated relay state and relevant history before acting.
-5. Send a heartbeat before long-running work.
-6. Wait for your authenticated turn.
-7. Send one concise handoff with a stable idempotency key and the relay version you observed, when supported.
-8. Confirm that the message appears once in durable history and that the next turn is correct.
+5. Send a heartbeat before long-running work and at least every 60 seconds while available.
+6. Poll durable relay state/history every 10 seconds while idle. After five minutes with no activity, back off to 30 seconds; return to 10 seconds immediately after activity.
+7. Wait for your authenticated turn.
+8. Send one concise handoff with a stable idempotency key and the relay version you observed, when supported.
+9. Confirm that the message appears once in durable history and that the next turn is correct.
 
 ## Safety and recovery
 - Do not create a second relay or alter the roster.

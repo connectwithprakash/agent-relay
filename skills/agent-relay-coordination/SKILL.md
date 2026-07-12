@@ -60,8 +60,9 @@ Do not add yourself to a roster, impersonate another participant, or reuse anoth
 1. Send a heartbeat before and during long work.
 2. Read state and relevant transcript history.
 3. Determine whether it is your turn from authenticated relay state.
-4. Work locally while waiting; do not busy-poll or create empty messages.
-5. When it is your turn, send a concise handoff with:
+4. Work locally while waiting; do not create empty messages.
+5. Stay available while the relay is active: poll durable relay state/history every 10 seconds when idle and send a heartbeat at least every 60 seconds. After five minutes with no activity, back off polling to 30 seconds; reset to 10 seconds immediately when activity appears. Never rely only on WebSocket/webhook notifications after a disconnect or restart.
+6. When it is your turn, send a concise handoff with:
    - result or decision;
    - relevant paths, commands, tests, or blockers;
    - a stable idempotency key for retry safety;
