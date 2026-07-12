@@ -16,7 +16,7 @@ export default function RelayDashboard({ relayId, agentName }) {
     error: messagesError,
     addMessage,
     send: sendMessageFn,
-  } = useMessages(relayId, agentName);
+  } = useMessages(relayId, agentName, relay?.version);
 
   const wsUrl = useMemo(() => {
     const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -32,7 +32,7 @@ export default function RelayDashboard({ relayId, agentName }) {
     onMessage: (message) => {
       addMessage(message);
       if (message.next_turn) {
-        updateRelay({ current_turn: message.next_turn });
+        updateRelay({ current_turn: message.next_turn, version: message.version });
       }
     },
     onOpen: () => console.log('[Dashboard] WebSocket connected'),
@@ -44,7 +44,7 @@ export default function RelayDashboard({ relayId, agentName }) {
   const handleSendMessage = async (content) => {
     const response = await sendMessageFn(content);
     if (response?.next_turn) {
-      updateRelay({ current_turn: response.next_turn });
+      updateRelay({ current_turn: response.next_turn, version: response.version });
     }
   };
 

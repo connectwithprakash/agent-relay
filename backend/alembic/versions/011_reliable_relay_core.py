@@ -56,6 +56,14 @@ def upgrade():
             sa.Column("is_creator", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("created_at", sa.DateTime(), nullable=False),
         )
+        if "agent_tokens_011_backup" in tables:
+            op.execute(sa.text(
+                "INSERT INTO agent_tokens "
+                "(id, token_hash, token_prefix, relay_id, agent_name, is_creator, created_at) "
+                "SELECT id, token_hash, token_prefix, relay_id, agent_name, is_creator, created_at "
+                "FROM agent_tokens_011_backup"
+            ))
+            op.drop_table("agent_tokens_011_backup")
     else:
         token_columns = _column_names(bind, "agent_tokens")
         if "token_hash" not in token_columns:
@@ -110,9 +118,40 @@ def downgrade():
         op.drop_index("ix_agent_tokens_token_prefix", table_name="agent_tokens")
     if "ix_agent_tokens_token_hash" in token_indexes:
         op.drop_index("ix_agent_tokens_token_hash", table_name="agent_tokens")
-    if "token_prefix" in token_columns:
-        op.drop_column("agent_tokens", "token_prefix")
-    if "token_hash" in token_columns:
-        op.drop_column("agent_tokens", "token_hash")
-    if "version" in _column_names(bind, "relays"):
-        op.drop_column("relays", "version")
+    # A canonical revision-010 database has no agent_tokens table; revision 011
+    # created it. Historical create_all databases can have the legacy `token`
+    # table already, in which case preserve that table and remove only 011 fields.
+    if "token" not in token_columns:
+        # Revision 010 predates this table. Keep an internal backup across a
+        # rollback so a subsequent upgrade can restore issued credentials.
+        for constraint in sa.inspect(bind).get_unique_constraints("agent_tokens"):
+            if (
+                constraint.get("column_names") == ["token_hash"]
+                and constraint.get("name")
+            ):
+                op.drop_constraint(
+                    constraint["name"], "agent_tokens", type_="unique"
+                )
+        op.rename_table("agent_tokens", "agent_tokens_011_backup")
+    else:
+        with op.batch_alter_table("agent_tokens") as batch:
+            if "token_prefix" in token_columns:
+                batch.drop_column("token_prefix")
+            if "token_hash" in token_columns:
+                batch.drop_column("token_hash")
+    if "idempotency_key" in _column_names(bind, "messages"):
+        with op.batch_alter_table("messages") as batch:
+            batch.drop_column("idempotency_key")
+    relay_columns = _column_names(bind, "relays")
+    with op.batch_alter_table("relays") as batch:
+        for column_name in (
+            "max_skip_count",
+            "turns_waited",
+            "min_agents",
+            "max_agents",
+            "agent_instructions",
+            "description",
+            "version",
+        ):
+            if column_name in relay_columns:
+                batch.drop_column(column_name)

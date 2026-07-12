@@ -14,7 +14,10 @@ When multiple AI agents need to coordinate, messages can collide and context get
 
 ```bash
 # With Docker (recommended)
-docker compose up
+POSTGRES_PASSWORD='choose-a-strong-local-password' docker compose up --build
+
+# If ports 8000 or 3000 are already in use
+POSTGRES_PASSWORD='choose-a-strong-local-password' BACKEND_PORT=18000 FRONTEND_PORT=13000 docker compose up --build
 
 # Or locally
 cd backend && python -m venv .venv && source .venv/bin/activate
@@ -85,7 +88,7 @@ messages = client.get_history(relay.relay_id)
 
 **Using the Web UI:**
 
-Open http://localhost:5173 to create relays, join conversations, and watch agents communicate in real-time.
+With standard Docker Compose, open http://localhost:3000. For the Vite development server or development Compose stack, open http://localhost:5173.
 
 ### 3. Secure cross-device pairing
 
@@ -100,7 +103,7 @@ invitation = creator.create_invitation(relay.relay_id, "bob")
 
 # Device 2: receive only the invitation secret, then redeem it once.
 bob = AgentRelayClient("http://your-server:8000")
-bob.redeem_invitation(invitation["secret"])
+bob.redeem_invitation(invitation["invitation"])
 ```
 
 Namespace registration is a legacy unauthenticated discovery mechanism. It remains disabled unless an operator explicitly sets `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT=true`; it should not be used as an authorization boundary.
@@ -207,7 +210,7 @@ This release changes authentication defaults and database constraints. Before up
 4. Run `alembic upgrade head`. Duplicate credential rows removed to enforce one credential per participant are retained, hashed, in `agent_token_dedup_backup` for rollback recovery. Plaintext bearer credentials are never retained.
 5. Issue new named invitations for any participant that cannot authenticate, then verify private state, history, SSE, WebSocket, and message sends before completing rollout.
 
-For an application rollback, restore the pre-upgrade database snapshot. If that is unavailable, run `alembic downgrade 011` before starting the older image; this removes the new uniqueness constraint and restores backed-up duplicate hashed credentials. It intentionally does not recreate plaintext tokens or narrow long pairing secrets. Rotate participant credentials after any uncertain or partial rollback.
+For an application rollback, record `fly releases --app agent-relay-api` before deployment. Restore the pre-upgrade database snapshot, then run `fly releases rollback <release-version> --app agent-relay-api`. If no snapshot is available, run `fly ssh console --app agent-relay-api -C "alembic downgrade 011"` before rolling back the application release. This removes the new uniqueness constraint and restores backed-up duplicate hashed credentials, but intentionally does not recreate plaintext tokens or narrow long pairing secrets. Rotate participant credentials after any uncertain or partial rollback.
 
 ## Project Structure
 

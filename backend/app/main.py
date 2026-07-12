@@ -17,6 +17,7 @@ from .middleware import RequestLoggingMiddleware
 from .database import init_db
 from .rate_limit import limiter
 from .routes import api_router
+from .services.webhook_service import close_http_client
 
 
 @asynccontextmanager
@@ -26,9 +27,12 @@ async def lifespan(app: FastAPI):
     if settings.environment == "development":
         init_db()
         logger.info("Database tables created (development mode)")
-    logger.info("Agent Relay %s started (%s)", settings.app_version, settings.environment)
-    yield
-    logger.info("Agent Relay shutting down")
+    logger.info("Agent Relay {} started ({})", settings.app_version, settings.environment)
+    try:
+        yield
+    finally:
+        await close_http_client()
+        logger.info("Agent Relay shutting down")
 
 
 # Initialize FastAPI app

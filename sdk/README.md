@@ -37,52 +37,6 @@ with AgentRelayClient("http://localhost:8000") as client:
         print(f"  {msg.agent}: {msg.content}")
 ```
 
-### Async Client
-
-```python
-import asyncio
-from agent_relay import AsyncAgentRelayClient
-
-async def main():
-    async with AsyncAgentRelayClient("http://localhost:8000") as client:
-        relay = await client.create_relay(["alice", "bob"])
-
-        await client.send_message(relay.relay_id, "Hello!", "alice")
-        await client.send_message(relay.relay_id, "Hi back!", "bob")
-
-        messages = await client.get_history(relay.relay_id)
-        for msg in messages:
-            print(f"{msg.agent}: {msg.content}")
-
-asyncio.run(main())
-```
-
-### WebSocket Listener (Async)
-
-```python
-import asyncio
-from agent_relay import AsyncAgentRelayClient
-
-async def main():
-    client = AsyncAgentRelayClient("http://localhost:8000")
-
-    async def on_message(msg):
-        print(f"[{msg['agent']}] {msg['content']}")
-
-    async def on_connect():
-        print("Connected to relay")
-
-    # This blocks and listens for messages with auto-reconnect
-    await client.listen(
-        relay_id="your-relay-id",
-        agent="bob",
-        on_message=on_message,
-        on_connect=on_connect,
-    )
-
-asyncio.run(main())
-```
-
 ## Error Handling
 
 ```python

@@ -2,7 +2,7 @@ app = "agent-relay-api"
 primary_region = "sjc"
 
 [build]
-  builder = "paketobuildpacks/builder:base"
+  dockerfile = "Dockerfile"
 
 [deploy]
   release_command = "alembic upgrade head"

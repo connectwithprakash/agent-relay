@@ -31,6 +31,7 @@ export function useWebSocket(url, options = {}) {
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
+  const shouldReconnectRef = useRef(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
   // Store callbacks in refs to avoid triggering reconnects when
@@ -61,6 +62,7 @@ export function useWebSocket(url, options = {}) {
       const ws = new WebSocket(url);
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) return;
         console.log('[WebSocket] Connected');
         setConnectionStatus('connected');
         reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
@@ -68,6 +70,7 @@ export function useWebSocket(url, options = {}) {
       };
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
         try {
           const message = JSON.parse(event.data);
           if (callbacksRef.current.onMessage) callbacksRef.current.onMessage(message);
@@ -77,12 +80,15 @@ export function useWebSocket(url, options = {}) {
       };
 
       ws.onerror = (error) => {
+        if (wsRef.current !== ws) return;
         console.error('[WebSocket] Error:', error);
         setConnectionStatus('error');
         if (callbacksRef.current.onError) callbacksRef.current.onError(error);
       };
 
       ws.onclose = (event) => {
+        // Ignore close events from sockets intentionally replaced by a newer one.
+        if (wsRef.current !== ws) return;
         console.log('[WebSocket] Disconnected:', event.reason);
         setConnectionStatus('disconnected');
         wsRef.current = null;
@@ -90,7 +96,7 @@ export function useWebSocket(url, options = {}) {
         if (callbacksRef.current.onClose) callbacksRef.current.onClose(event);
 
         // Attempt reconnection with exponential backoff
-        if (enabled && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        if (shouldReconnectRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
           const backoffTime =
             reconnectInterval * Math.pow(2, reconnectAttemptsRef.current);
           reconnectAttemptsRef.current += 1;
@@ -121,6 +127,7 @@ export function useWebSocket(url, options = {}) {
    * Disconnect WebSocket
    */
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false;
     clearReconnectTimeout();
     if (wsRef.current) {
       wsRef.current.close();
@@ -147,20 +154,23 @@ export function useWebSocket(url, options = {}) {
   const reconnect = useCallback(() => {
     disconnect();
     reconnectAttemptsRef.current = 0;
+    shouldReconnectRef.current = true;
     connect();
   }, [disconnect, connect]);
 
   // Connect on mount or when URL/enabled changes
   useEffect(() => {
-    if (enabled) {
+    if (enabled && url) {
+      shouldReconnectRef.current = true;
       connect();
     }
 
-    // Cleanup on unmount
     return () => {
+      shouldReconnectRef.current = false;
+      clearReconnectTimeout();
       disconnect();
     };
-  }, [connect, disconnect, enabled]);
+  }, [connect, disconnect, enabled, url, clearReconnectTimeout]);
 
   return {
     connectionStatus,

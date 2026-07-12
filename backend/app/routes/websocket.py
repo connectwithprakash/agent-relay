@@ -42,7 +42,7 @@ async def websocket_endpoint(
         if has_tokens:
             if token:
                 logger.warning(
-                    "Token passed via query parameter for relay %s. "
+                    "Token passed via query parameter for relay {}. "
                     "Prefer the Sec-WebSocket-Protocol header for credentials.",
                     relay_id,
                 )

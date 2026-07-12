@@ -99,9 +99,6 @@ def upgrade():
     columns = {
         column["name"] for column in sa.inspect(bind).get_columns("agent_tokens")
     }
-    if "uq_agent_tokens_relay_agent" not in _unique_names(bind):
-        _deduplicate_credentials(bind, columns)
-
     if "token" in columns:
         rows = bind.execute(
             sa.text(
@@ -130,6 +127,9 @@ def upgrade():
         # Plaintext bearer credentials must not survive the hash migration.
         with op.batch_alter_table("agent_tokens") as batch:
             batch.drop_column("token")
+
+    if "uq_agent_tokens_relay_agent" not in _unique_names(bind):
+        _deduplicate_credentials(bind, columns)
 
     incomplete = bind.execute(
         sa.text(

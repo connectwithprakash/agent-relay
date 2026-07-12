@@ -147,10 +147,10 @@ class TestDisconnectedAfter60s:
         assert alice_p["status"] == "disconnected"
 
 
-class TestAutoSkipDisconnectedAgent:
-    """Test that disconnected agents are auto-skipped when holding the turn"""
+class TestDisconnectedAgentReads:
+    """Reading relay state must never mutate coordination state."""
 
-    def test_auto_skip_disconnected_agent(self, client, sample_relay, db_session):
+    def test_disconnected_agent_is_not_skipped_by_read(self, client, sample_relay, db_session):
         relay_id = sample_relay["relay_id"]
 
         # Send heartbeat for alice (who has the first turn)
@@ -172,13 +172,12 @@ class TestAutoSkipDisconnectedAgent:
         presence.last_seen = datetime.now(timezone.utc) - timedelta(seconds=150)
         db_session.commit()
 
-        # Check relay status - should auto-skip alice's turn
+        # Public polling must not be able to mutate turn ownership.
         resp = client.get(f"/relays/{relay_id}")
         assert resp.status_code == 200
         data = resp.json()
 
-        # Turn should have advanced to bob
-        assert data["current_turn"] == "bob"
+        assert data["current_turn"] == "alice"
 
     def test_no_skip_when_agent_recently_seen(self, client, sample_relay, db_session):
         """Agent with recent heartbeat should NOT be skipped"""

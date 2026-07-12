@@ -4,6 +4,7 @@ Relay service - Business logic for relay operations
 import secrets
 from datetime import datetime, timezone
 from typing import Optional, Tuple
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from ..models import AgentToken, PairingInvitation, Relay
@@ -155,16 +156,7 @@ class RelayService:
         )
         status = "open" if not agent_names else "active"
 
-        # Auto-skip disconnected agent if they hold the current turn
         presence_list = RelayService.get_presence_for_relay(db, relay)
-        if current_turn:
-            current_presence = next(
-                (p for p in presence_list if p.agent == current_turn), None
-            )
-            if current_presence and current_presence.status == "disconnected":
-                current_turn = RelayService.advance_turn(db, relay)
-                # Refresh presence after turn advance
-                presence_list = RelayService.get_presence_for_relay(db, relay)
 
         return RelayState(
             relay_id=relay.id,
@@ -233,6 +225,7 @@ class RelayService:
         If next_agent specified and valid, they go next (unless an agent is starving).
         Otherwise falls back to round-robin.
         """
+        observed_version = relay.version
         agent_names = relay.agent_names or []
         if not agent_names:
             raise ValueError("Cannot advance turn: relay has no agents")
@@ -258,7 +251,7 @@ class RelayService:
             presence_list = RelayService.get_presence_for_relay(db, relay)
             disconnected = {p.agent for p in presence_list if p.status == "disconnected"}
         except Exception:
-            logger.warning("Failed to fetch presence for starvation check in relay %s", relay.id)
+            logger.warning("Failed to fetch presence for starvation check in relay {}", relay.id)
 
         starving = [(a, cnt) for a, cnt in turns_waited.items()
                     if cnt >= max_skip and a != current_agent and a in agent_names and a not in disconnected]
@@ -274,7 +267,22 @@ class RelayService:
         relay.turns_waited = turns_waited
         relay.turn_started_at = datetime.now(timezone.utc)
         if commit:
+            with db.no_autoflush:
+                result = db.execute(
+                    update(Relay)
+                    .where(Relay.id == relay.id, Relay.version == observed_version)
+                    .values(
+                        current_turn=relay.current_turn,
+                        agent_count=relay.agent_count,
+                        turns_waited=relay.turns_waited,
+                        turn_started_at=relay.turn_started_at,
+                        version=observed_version + 1,
+                    )
+                )
+            if result.rowcount != 1:
+                db.rollback()
+                raise RuntimeError("Relay state changed; refresh and retry")
+            db.expire(relay)
             db.commit()
-        else:
-            db.flush()
+            db.refresh(relay)
         return agent_names[relay.current_turn]

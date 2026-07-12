@@ -4,7 +4,7 @@ Test fixtures and configuration for Agent Relay tests
 import asyncio
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -38,26 +38,14 @@ _TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_eng
 
 @pytest.fixture()
 def db_session():
-    """Provide a transactional database session that rolls back after each test."""
-    connection = _engine.connect()
-    transaction = connection.begin()
-    session = _TestingSessionLocal(bind=connection)
-
-    # Nested transaction so that the session.commit() inside app code
-    # doesn't actually commit the outer transaction.
-    nested = connection.begin_nested()
-
-    @event.listens_for(session, "after_transaction_end")
-    def restart_savepoint(sess, trans):
-        nonlocal nested
-        if trans.nested and not trans._parent.nested:
-            nested = connection.begin_nested()
-
+    """Provide an isolated database session and clear persisted rows after each test."""
+    session = _TestingSessionLocal()
     yield session
-
     session.close()
-    transaction.rollback()
-    connection.close()
+
+    with _engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            connection.execute(table.delete())
 
 
 @pytest.fixture()

@@ -12,7 +12,7 @@ import { getHistory, sendMessage } from '../utils/api';
  * @param {string} agentName - Current agent name
  * @returns {Object} Messages state and operations
  */
-export function useMessages(relayId, agentName) {
+export function useMessages(relayId, agentName, relayVersion = null) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -63,7 +63,10 @@ export function useMessages(relayId, agentName) {
 
       try {
         setSending(true);
-        const response = await sendMessage(relayId, content, agentName);
+        const response = await sendMessage(relayId, content, agentName, null, {
+          idempotencyKey: crypto.randomUUID(),
+          expectedVersion: relayVersion,
+        });
 
         // Note: Don't add message here - it will come through WebSocket
         // This prevents duplicate messages
@@ -76,7 +79,7 @@ export function useMessages(relayId, agentName) {
         setSending(false);
       }
     },
-    [relayId, agentName]
+    [relayId, agentName, relayVersion]
   );
 
   /**

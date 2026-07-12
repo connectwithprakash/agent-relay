@@ -112,6 +112,7 @@ class SendMessageResponse(BaseModel):
     message_id: int
     next_turn: str
     message_count: int
+    version: int
 
 
 class MessageSchema(BaseModel):
