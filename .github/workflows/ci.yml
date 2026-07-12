@@ -18,7 +18,7 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
       - name: Install test dependencies
-        run: pip install pytest pytest-cov
+        run: pip install pytest pytest-cov pytest-asyncio
       - name: Run tests
         working-directory: backend
         run: pytest tests/ -v --cov=app --cov-report=term-missing
