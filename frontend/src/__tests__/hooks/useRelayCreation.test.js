@@ -120,7 +120,7 @@ describe('useRelayCreation', () => {
 
     expect(submitResult).toEqual(mockRelay);
     expect(result.current.createdRelay).toEqual(mockRelay);
-    expect(createRelay).toHaveBeenCalledWith(['builder', 'reviewer'], null, false);
+    expect(createRelay).toHaveBeenCalledWith(['builder', 'reviewer'], null, false, { description: '' });
   });
 
   it('handles API errors on submit', async () => {

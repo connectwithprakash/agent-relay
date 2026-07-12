@@ -40,7 +40,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./frontend
-        run: npm ci
+        run: npm ci --include=dev
 
       - name: Build frontend
         working-directory: ./frontend
@@ -61,7 +61,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Vercel deployment configuration
+        id: deployment_configuration
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Vercel deployment skipped::Set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID to enable production deployment."
+          fi
+
       - name: Deploy to Vercel
+        if: steps.deployment_configuration.outputs.configured == 'true'
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -77,10 +92,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Fly.io deployment configuration
+        id: deployment_configuration
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -n "$FLY_API_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Fly.io deployment skipped::Set FLY_API_TOKEN to enable production deployment."
+          fi
+
       - name: Deploy to Fly.io
+        if: steps.deployment_configuration.outputs.configured == 'true'
         uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy
+        if: steps.deployment_configuration.outputs.configured == 'true'
         working-directory: ./backend
         run: flyctl deploy --remote-only
         env:
