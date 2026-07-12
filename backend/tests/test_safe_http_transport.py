@@ -48,6 +48,26 @@ def test_connect_rejects_non_global_dns_answers(ip):
     connect.assert_not_awaited()
 
 
+def test_connect_falls_back_to_the_next_validated_address():
+    backend = PublicAddressBackend()
+    stream = object()
+    connect = AsyncMock(
+        side_effect=[httpcore.ConnectError("unreachable"), stream]
+    )
+
+    with patch(
+        "socket.getaddrinfo",
+        return_value=[_address("2606:2800:220:1:248:1893:25c8:1946"), _address("93.184.216.34")],
+    ), patch.object(AnyIOBackend, "connect_tcp", connect):
+        result = asyncio.run(backend.connect_tcp("example.com", 443))
+
+    assert result is stream
+    assert [call.args[0] for call in connect.await_args_list] == [
+        "2606:2800:220:1:248:1893:25c8:1946",
+        "93.184.216.34",
+    ]
+
+
 def test_connect_rejects_mixed_public_and_private_dns_answers():
     backend = PublicAddressBackend()
 

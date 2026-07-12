@@ -16,9 +16,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         working-directory: backend
-        run: pip install --require-hashes -r requirements.lock
-      - name: Install test dependencies
-        run: pip install pytest pytest-cov pytest-asyncio
+        run: pip install --require-hashes -r requirements-test.lock
       - name: Run tests
         working-directory: backend
         run: pytest tests/ -v --cov=app --cov-report=term-missing

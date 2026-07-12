@@ -41,14 +41,22 @@ class PublicAddressBackend(AnyIOBackend):
             raise httpcore.ConnectError("Webhook host resolves to a non-global address")
 
         # HTTP Core retains the original hostname for Host and TLS SNI/certificate
-        # verification; only the TCP destination is replaced with the vetted IP.
-        return await super().connect_tcp(
-            public_ips[0],
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
+        # verification; only the TCP destination is replaced with a vetted IP.
+        # Try every safe answer so dual-stack hosts retain normal DNS fallback.
+        last_error: httpcore.ConnectError | None = None
+        for ip in public_ips:
+            try:
+                return await super().connect_tcp(
+                    ip,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except httpcore.ConnectError as exc:
+                last_error = exc
+        assert last_error is not None
+        raise last_error
 
 
 class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):

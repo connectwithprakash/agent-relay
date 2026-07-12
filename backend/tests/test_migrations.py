@@ -65,12 +65,27 @@ def test_revision_011_downgrade_restores_revision_010_schema(tmp_path):
     baseline_messages = {column["name"] for column in inspect(engine).get_columns("messages")}
 
     _upgrade(database_url, "011")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO agent_tokens "
+            "(token_hash, token_prefix, relay_id, agent_name, is_creator, created_at) "
+            "VALUES ('rollback-hash', 'rollback', 'relay-test', 'alice', 1, CURRENT_TIMESTAMP)"
+        ))
     _downgrade(database_url, "010")
 
     inspector = inspect(engine)
     assert {column["name"] for column in inspector.get_columns("relays")} == baseline_relays
     assert {column["name"] for column in inspector.get_columns("messages")} == baseline_messages
     assert "pairing_invitations" not in inspector.get_table_names()
+    assert "agent_tokens" not in inspector.get_table_names()
+    assert "agent_tokens_011_backup" in inspector.get_table_names()
+
+    _upgrade(database_url, "011")
+    with engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT token_hash FROM agent_tokens WHERE token_hash='rollback-hash'"
+        )).scalar_one() == "rollback-hash"
+    assert "agent_tokens_011_backup" not in inspect(engine).get_table_names()
 
 
 def test_upgrade_preserves_newest_creator_credential(tmp_path):
