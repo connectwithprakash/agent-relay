@@ -1,5 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRelayCreation } from '../../hooks/useRelayCreation';
 
 // Mock the API module
@@ -120,7 +120,7 @@ describe('useRelayCreation', () => {
 
     expect(submitResult).toEqual(mockRelay);
     expect(result.current.createdRelay).toEqual(mockRelay);
-    expect(createRelay).toHaveBeenCalledWith(['builder', 'reviewer'], null, false);
+    expect(createRelay).toHaveBeenCalledWith(['builder', 'reviewer'], null, false, { description: '' });
   });
 
   it('handles API errors on submit', async () => {

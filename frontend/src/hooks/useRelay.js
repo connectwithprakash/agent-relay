@@ -9,10 +9,9 @@ import { getRelay } from '../utils/api';
  * - Separated from UI rendering and WebSocket logic
  *
  * @param {string} relayId - The relay identifier
- * @param {string|null} ownerId - Optional owner ID for private relays
  * @returns {Object} Relay state and control functions
  */
-export function useRelay(relayId, ownerId = null) {
+export function useRelay(relayId) {
   const [relay, setRelay] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -31,7 +30,7 @@ export function useRelay(relayId, ownerId = null) {
     try {
       setLoading(true);
       setError(null);
-      const data = await getRelay(relayId, ownerId);
+      const data = await getRelay(relayId);
       setRelay(data);
     } catch (err) {
       setError(err.message);
@@ -39,7 +38,7 @@ export function useRelay(relayId, ownerId = null) {
     } finally {
       setLoading(false);
     }
-  }, [relayId, ownerId]);
+  }, [relayId]);
 
   /**
    * Update relay state locally

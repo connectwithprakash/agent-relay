@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useRelayList } from '../hooks';
 import RelayCard from '../components/RelayCard';
 import EmptyState from '../components/EmptyState';
-import { getRelayByCode } from '../utils/api';
+import { redeemInvitation } from '../utils/api';
 
 function HeroSection({ joinId, setJoinId, onJoin, joinCodeError, onCreateClick }) {
   return (
@@ -39,7 +39,7 @@ function HeroSection({ joinId, setJoinId, onJoin, joinCodeError, onCreateClick }
               id="hero-join-input"
               value={joinId}
               onChange={(e) => setJoinId(e.target.value)}
-              placeholder="Relay ID or 6-char join code"
+              placeholder="Relay ID or one-time invitation"
               className="flex-1 sm:w-64 px-4 py-3.5 bg-white/10 backdrop-blur-sm text-white placeholder-white/50 border border-white/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-white/40 focus:bg-white/15 transition-all"
             />
             <button
@@ -288,7 +288,7 @@ function Footer() {
 
 export default function HomePage() {
   const [joinId, setJoinId] = useState('');
-  const [joinCode, setJoinCode] = useState('');
+
   const [joinCodeError, setJoinCodeError] = useState('');
   const navigate = useNavigate();
   const { relays, loading, error } = useRelayList();
@@ -305,12 +305,11 @@ export default function HomePage() {
       return;
     }
 
-    // Otherwise treat as a join code
     try {
-      const result = await getRelayByCode(trimmed.toUpperCase());
+      const result = await redeemInvitation(trimmed);
       navigate(`/relay/${result.relay_id}`);
-    } catch (err) {
-      setJoinCodeError(err.message || 'Invalid relay ID or join code');
+    } catch (error) {
+      setJoinCodeError(error.message || 'Invalid relay ID or invitation');
     }
   };
 

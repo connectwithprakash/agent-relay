@@ -99,7 +99,18 @@ def _handle_http_error(exc: httpx.HTTPStatusError) -> dict:
     return {"error": f"Request failed ({status}): {detail}"}
 
 
-def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active", message: str = "") -> None:
+def _auth_headers(token: str = "") -> dict[str, str]:
+    token = token or _session.get("token", "")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _send_heartbeat(
+    relay_id: str = "",
+    agent: str = "",
+    status: str = "active",
+    message: str = "",
+    token: str = "",
+) -> None:
     """Send a heartbeat to the relay server (best-effort, errors ignored)."""
     rid = relay_id or _session.get("relay_id", "")
     ag = agent or _session.get("agent", "")
@@ -112,13 +123,20 @@ def _send_heartbeat(relay_id: str = "", agent: str = "", status: str = "active",
         _client.post(
             f"/relays/{rid}/heartbeat",
             params=params,
+            headers=_auth_headers(token),
         )
     except Exception:
         pass  # Best-effort, never block the caller
 
 
 @mcp.tool()
-def relay_heartbeat(status: str = "active", message: str = "", relay_id: str = "", agent: str = "") -> dict:
+def relay_heartbeat(
+    status: str = "active",
+    message: str = "",
+    relay_id: str = "",
+    agent: str = "",
+    token: str = "",
+) -> dict:
     """Send heartbeat to let others know you're still connected.
     Call this periodically (every 10-15 seconds) during long operations.
 
@@ -127,6 +145,7 @@ def relay_heartbeat(status: str = "active", message: str = "", relay_id: str = "
         message: Brief description of what you're doing (e.g. "reviewing architecture.svg", "running tests").
         relay_id: The relay ID (defaults to session relay).
         agent: Your agent name (defaults to session agent).
+        token: Participant token for this relay (defaults to session token).
     """
     relay_id = relay_id or _session.get("relay_id", "")
     agent = agent or _session.get("agent", "")
@@ -143,6 +162,7 @@ def relay_heartbeat(status: str = "active", message: str = "", relay_id: str = "
         resp = _client.post(
             f"/relays/{relay_id}/heartbeat",
             params=params,
+            headers=_auth_headers(token),
         )
         resp.raise_for_status()
         return resp.json()
@@ -199,6 +219,8 @@ def relay_send(
     token: str = "",
     type: str = "text",
     reply_to: int = 0,
+    idempotency_key: str = "",
+    expected_version: int = -1,
 ) -> dict:
     """Send a message in a relay. Only works when it's the agent's turn.
 
@@ -212,6 +234,8 @@ def relay_send(
         token: Optional token for authentication (defaults to session token).
         type: Message type - text, question, action-item, decision, bug-report, code.
         reply_to: Message ID to reply to (for threading). Use 0 for no reply.
+        idempotency_key: Stable key reused for retries of the same logical send.
+        expected_version: Relay version observed before sending; -1 disables the check.
     """
     relay_id = relay_id or _session.get("relay_id", "")
     agent = agent or _session.get("agent", "")
@@ -234,13 +258,17 @@ def relay_send(
         headers["X-Join-Code"] = join_code
 
     # Auto-send heartbeat before sending a message
-    _send_heartbeat(relay_id, agent, "active")
+    _send_heartbeat(relay_id, agent, "active", token=token)
 
     body: dict = {"content": message, "type": type, "message_type": type}
     if agent:
         body["agent"] = agent
     if reply_to:
         body["reply_to"] = reply_to
+    if idempotency_key:
+        body["idempotency_key"] = idempotency_key
+    if expected_version >= 0:
+        body["expected_version"] = expected_version
 
     try:
         resp = _client.post(
@@ -255,7 +283,9 @@ def relay_send(
 
 
 @mcp.tool()
-def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
+def relay_read(
+    relay_id: str = "", limit: int = 20, type: str = "", token: str = ""
+) -> dict:
     """Read recent messages from a relay. Optionally filter by message type.
 
     Args:
@@ -275,6 +305,7 @@ def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
         resp = _client.get(
             f"/relays/{relay_id}/history",
             params=params,
+            headers=_auth_headers(token),
         )
         resp.raise_for_status()
         return resp.json()
@@ -283,7 +314,7 @@ def relay_read(relay_id: str = "", limit: int = 20, type: str = "") -> dict:
 
 
 @mcp.tool()
-def relay_status(relay_id: str = "") -> dict:
+def relay_status(relay_id: str = "", token: str = "") -> dict:
     """Get current relay status: whose turn, all agents with turn order, presence info, message count, and description.
 
     Args:
@@ -294,10 +325,10 @@ def relay_status(relay_id: str = "") -> dict:
         return {"error": "No relay_id provided and no active session. Use relay_create first."}
 
     # Auto-send heartbeat when checking status
-    _send_heartbeat(relay_id)
+    _send_heartbeat(relay_id, token=token)
 
     try:
-        resp = _client.get(f"/relays/{relay_id}")
+        resp = _client.get(f"/relays/{relay_id}", headers=_auth_headers(token))
         resp.raise_for_status()
         result = resp.json()
 
@@ -332,7 +363,7 @@ def relay_status(relay_id: str = "") -> dict:
 
 
 @mcp.tool()
-def relay_info(relay_id: str = "") -> dict:
+def relay_info(relay_id: str = "", token: str = "") -> dict:
     """Get relay details: description, instructions, agents, and turn order.
     Call this after joining to understand the relay's purpose and your role.
 
@@ -346,7 +377,7 @@ def relay_info(relay_id: str = "") -> dict:
 
     result: dict = {}
     try:
-        resp = _client.get(f"/relays/{relay_id}")
+        resp = _client.get(f"/relays/{relay_id}", headers=_auth_headers(token))
         resp.raise_for_status()
         status = resp.json()
         result["relay_id"] = relay_id
@@ -376,6 +407,7 @@ def relay_info(relay_id: str = "") -> dict:
             instr_resp = _client.get(
                 f"/relays/{relay_id}/instructions",
                 params={"agent": agent_name},
+                headers=_auth_headers(token),
             )
             if instr_resp.status_code == 200:
                 instr = instr_resp.json()
@@ -388,7 +420,7 @@ def relay_info(relay_id: str = "") -> dict:
 
 
 @mcp.tool()
-def relay_listen(relay_id: str = "", since_id: int = 0) -> dict:
+def relay_listen(relay_id: str = "", since_id: int = 0, token: str = "") -> dict:
     """Check for new messages instantly (non-blocking).
 
     Returns immediately with any new messages since last check.
@@ -412,7 +444,11 @@ def relay_listen(relay_id: str = "", since_id: int = 0) -> dict:
         params["agent"] = agent
 
     try:
-        resp = _client.get(f"/relays/{relay_id}/listen", params=params)
+        resp = _client.get(
+            f"/relays/{relay_id}/listen",
+            params=params,
+            headers=_auth_headers(token),
+        )
         resp.raise_for_status()
         result = resp.json()
 
@@ -426,7 +462,7 @@ def relay_listen(relay_id: str = "", since_id: int = 0) -> dict:
 
 
 @mcp.tool()
-def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
+def relay_watch(relay_id: str = "", duration: int = 5, token: str = "") -> dict:
     """Watch a relay for new messages. Returns any messages received within the duration.
 
     This is a short poll (default 5 seconds). For reading existing history, use relay_read instead.
@@ -444,7 +480,12 @@ def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
     duration = min(duration, 30)
     messages = []
     try:
-        with _client.stream("GET", f"/relays/{relay_id}/watch", timeout=duration + 2) as response:
+        with _client.stream(
+            "GET",
+            f"/relays/{relay_id}/watch",
+            headers=_auth_headers(token),
+            timeout=duration + 2,
+        ) as response:
             response.raise_for_status()
             deadline = time.monotonic() + duration
             for line in response.iter_lines():
@@ -460,14 +501,64 @@ def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
 
 
 @mcp.tool()
-def relay_join_code(join_code: str, agent_name: str) -> dict:
-    """Join a relay using a short join code from another device.
+def relay_create_invitation(
+    agent_name: str,
+    relay_id: str = "",
+    expires_in_seconds: int = 900,
+    token: str = "",
+) -> dict:
+    """Create a one-time, participant-bound invitation as the relay creator."""
+    relay_id = relay_id or _session.get("relay_id", "")
+    if not relay_id:
+        return {"error": "No relay_id provided and no active session."}
+    try:
+        response = _client.post(
+            f"/relays/{relay_id}/invitations",
+            params={
+                "agent_name": agent_name,
+                "expires_in_seconds": expires_in_seconds,
+            },
+            headers=_auth_headers(token),
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
 
-    Share a 6-character code (e.g. ABC123) instead of a full relay ID.
+
+@mcp.tool()
+def relay_redeem_invitation(invitation: str) -> dict:
+    """Redeem a named one-time invitation and persist the issued credential."""
+    try:
+        response = _client.post(f"/pairing-invitations/{invitation}/redeem")
+        response.raise_for_status()
+        result = response.json()
+        _session["relay_id"] = result["relay_id"]
+        _session["agent"] = result["agent_name"]
+        _session["token"] = result["token"]
+        _session["last_id"] = 0
+        try:
+            _save_config_file(
+                server=RELAY_URL,
+                relay_id=result["relay_id"],
+                token=result["token"],
+                agent=result["agent_name"],
+            )
+            result["config_saved"] = True
+        except OSError:
+            result["config_saved"] = False
+        return result
+    except httpx.HTTPStatusError as exc:
+        return _handle_http_error(exc)
+
+
+@mcp.tool()
+def relay_join_code(join_code: str, agent_name: str) -> dict:
+    """Join using legacy relay-wide compatibility pairing material.
     The code is generated when a relay is created.
 
     Args:
-        join_code: The 6-character join code.
+        join_code: The relay-wide compatibility pairing secret.
         agent_name: Your agent's name.
     """
     try:
@@ -486,7 +577,7 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
 
         # Fetch relay status and instructions so the joining agent has full context
         try:
-            status_resp = _client.get(f"/relays/{result['relay_id']}")
+            status_resp = _client.get(f"/relays/{result['relay_id']}", headers=_auth_headers())
             if status_resp.status_code == 200:
                 status = status_resp.json()
                 result["description"] = status.get("description")
@@ -509,6 +600,7 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
             instr_resp = _client.get(
                 f"/relays/{result['relay_id']}/instructions",
                 params={"agent": agent_name},
+                headers=_auth_headers(),
             )
             if instr_resp.status_code == 200:
                 instr = instr_resp.json()

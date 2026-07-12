@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useRelay, useSSE, useMessages } from '../hooks';
 import MessageList from './MessageList';
+import { getToken } from '../utils/auth';
 
 /**
  * SpectatorDashboard - Read-only spectator view for watching relay conversations
@@ -11,6 +12,7 @@ import MessageList from './MessageList';
  * @param {string} relayId - The relay to watch
  */
 export default function SpectatorDashboard({ relayId }) {
+  const token = getToken(relayId) || '';
   const { relay, loading: relayLoading, error: relayError, updateRelay } = useRelay(relayId);
 
   const {
@@ -27,6 +29,7 @@ export default function SpectatorDashboard({ relayId }) {
 
   const { connectionStatus } = useSSE(sseUrl, {
     enabled: !!relayId,
+    token,
     onMessage: (message) => {
       addMessage(message);
       if (message.next_turn) {

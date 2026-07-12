@@ -20,7 +20,7 @@ class Relay(Base):
     agent_names = Column(JSON)  # List of agent names
     is_public = Column(Boolean, default=False)  # Privacy control
     owner_id = Column(String, nullable=True)  # Owner identifier for access control
-    join_code = Column(String(6), unique=True, nullable=True, index=True)  # Short human-readable join code
+    join_code = Column(String(64), unique=True, nullable=True, index=True)  # Legacy relay-wide pairing secret
     turn_timeout = Column(Integer, nullable=True)  # Seconds per turn, None = no timeout
     turn_started_at = Column(DateTime, nullable=True)  # When the current turn began
     description = Column(Text, nullable=True)  # What this relay is for
@@ -131,6 +131,9 @@ class AgentPresence(Base):
 class AgentToken(Base):
     """Token-based authentication for agents in a relay"""
     __tablename__ = "agent_tokens"
+    __table_args__ = (
+        UniqueConstraint("relay_id", "agent_name", name="uq_agent_tokens_relay_agent"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     token_hash = Column(String(64), unique=True, nullable=False, index=True)

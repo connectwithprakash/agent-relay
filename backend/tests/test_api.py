@@ -64,11 +64,11 @@ class TestGetRelayState:
     def test_get_private_relay_denied(self, client, private_relay):
         relay_id = private_relay["relay_id"]
         response = client.get(f"/relays/{relay_id}?owner_id=wrong-owner")
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     def test_get_private_relay_by_owner(self, client, private_relay):
         relay_id = private_relay["relay_id"]
-        response = client.get(f"/relays/{relay_id}?owner_id=test-owner")
+        response = client.get(f"/relays/{relay_id}", headers={"Authorization": f"Bearer {private_relay['token']}"})
         assert response.status_code == 200
 
 
@@ -282,6 +282,18 @@ class TestRelayInstructions:
     def test_get_instructions_not_found(self, client):
         response = client.get("/relays/nonexistent/instructions")
         assert response.status_code == 404
+
+    def test_private_instructions_require_participant_token(self, client, private_relay):
+        relay_id = private_relay["relay_id"]
+        unauthorized = client.get(f"/relays/{relay_id}/instructions")
+        assert unauthorized.status_code == 401
+
+        authorized = client.get(
+            f"/relays/{relay_id}/instructions",
+            headers={"Authorization": f"Bearer {private_relay['token']}"},
+        )
+        assert authorized.status_code == 200
+        assert authorized.json()["relay_id"] == relay_id
 
 
 class TestWebhooks:

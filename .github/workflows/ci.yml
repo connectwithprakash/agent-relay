@@ -18,11 +18,10 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
       - name: Install test dependencies
-        run: pip install pytest pytest-cov
+        run: pip install pytest pytest-cov pytest-asyncio
       - name: Run tests
         working-directory: backend
         run: pytest tests/ -v --cov=app --cov-report=term-missing
-        continue-on-error: true
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -33,7 +32,10 @@ jobs:
           node-version: "20"
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm ci --include=dev
+      - name: Run tests
+        working-directory: frontend
+        run: NODE_ENV=development npm test
       - name: Build
         working-directory: frontend
         run: npm run build
@@ -51,3 +53,50 @@ jobs:
       - name: Run SDK tests
         working-directory: sdk
         run: pytest tests/ -v
+
+  mcp-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install MCP server
+        working-directory: mcp-server
+        run: pip install -e ".[dev]"
+      - name: Run MCP tests
+        working-directory: mcp-server
+        run: pytest tests/ -v
+
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: relay
+          POSTGRES_DB: relay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relay"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verify PostgreSQL migration and rollback path
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://relay:relay@localhost:5432/relay
+        run: |
+          alembic upgrade head
+          alembic downgrade 011
+          alembic upgrade head

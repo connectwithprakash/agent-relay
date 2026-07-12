@@ -4,7 +4,7 @@ All tests mock the module-level httpx client so no running server is needed.
 """
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 import httpx
 import pytest
@@ -17,6 +17,8 @@ from agent_relay_mcp.server import (
     relay_read,
     relay_status,
     relay_join_code,
+    relay_create_invitation,
+    relay_redeem_invitation,
     relay_info,
 )
 
@@ -154,6 +156,17 @@ class TestRelayCreate:
 
 class TestRelaySend:
     @patch("agent_relay_mcp.server._client")
+    def test_relay_send_forwards_reliability_controls(self, mock_client):
+        mock_client.post.return_value = _mock_response(SEND_MESSAGE_RESPONSE)
+        relay_send(
+            "r1", "hello", "alice",
+            idempotency_key="send-1", expected_version=4,
+        )
+        body = mock_client.post.call_args.kwargs["json"]
+        assert body["idempotency_key"] == "send-1"
+        assert body["expected_version"] == 4
+
+    @patch("agent_relay_mcp.server._client")
     def test_relay_send_success(self, mock_client):
         mock_client.post.return_value = _mock_response(SEND_MESSAGE_RESPONSE)
         result = relay_send("r1", "hello", "alice")
@@ -205,7 +218,39 @@ class TestRelayRead:
         mock_client.get.assert_called_once_with(
             "/relays/r1/history",
             params={"limit": 10},
+            headers={},
         )
+
+    @patch("agent_relay_mcp.server._client")
+    def test_explicit_relay_token_overrides_session_token(self, mock_client):
+        mock_client.get.return_value = _mock_response(HISTORY_RESPONSE)
+        relay_read("r2", token="token-r2")
+        assert mock_client.get.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer token-r2"
+        }
+
+
+class TestPairingInvitations:
+    @patch("agent_relay_mcp.server._client")
+    def test_create_invitation(self, mock_client):
+        mock_client.post.return_value = _mock_response({"invitation": "invite-bob"})
+        result = relay_create_invitation("bob", relay_id="r1", token="creator")
+        assert result["invitation"] == "invite-bob"
+        assert mock_client.post.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer creator"
+        }
+
+    @patch("agent_relay_mcp.server._save_config_file")
+    @patch("agent_relay_mcp.server._client")
+    def test_redeem_invitation_persists_session(self, mock_client, mock_save):
+        mock_client.post.return_value = _mock_response({
+            "relay_id": "r1", "agent_name": "bob", "token": "token-bob"
+        })
+        result = relay_redeem_invitation("invite-bob")
+        assert result["config_saved"] is True
+        assert _session["token"] == "token-bob"
+        mock_save.assert_called_once()
+        _session.clear()
 
 
 class TestRelayStatus:
@@ -214,7 +259,7 @@ class TestRelayStatus:
         mock_client.get.return_value = _mock_response(RELAY_STATE_RESPONSE)
         result = relay_status("test-relay-123")
         assert result["current_turn"] == "alice"
-        mock_client.get.assert_called_once_with("/relays/test-relay-123")
+        mock_client.get.assert_called_once_with("/relays/test-relay-123", headers={})
 
     @patch("agent_relay_mcp.server._session", {"agent": "alice"})
     @patch("agent_relay_mcp.server._client")
@@ -264,6 +309,14 @@ class TestRelayJoinCode:
         assert result["your_instructions"] == "Review the code carefully."
         assert len(result["turn_order"]) == 2
         assert "(you)" in result["turn_order"][1]
+        assert mock_client.get.call_args_list == [
+            call("/relays/test-relay-123", headers={"Authorization": "Bearer tok-123"}),
+            call(
+                "/relays/test-relay-123/instructions",
+                params={"agent": "bob"},
+                headers={"Authorization": "Bearer tok-123"},
+            ),
+        ]
 
     @patch("agent_relay_mcp.server._client")
     def test_join_code_works_when_status_fails(self, mock_client):
@@ -305,6 +358,10 @@ class TestRelayInfo:
         assert result["message_count"] == 3
         assert result["your_instructions"] == "You are the reviewer."
         assert len(result["turn_order"]) == 2
+        assert mock_client.get.call_args_list == [
+            call("/relays/r1", headers={}),
+            call("/relays/r1/instructions", params={"agent": "alice"}, headers={}),
+        ]
 
     def test_relay_info_no_relay_id(self):
         _session.clear()

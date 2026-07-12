@@ -419,8 +419,8 @@ class TestSpectatorFlow:
         assert r.status_code == 200
         assert r.json()["spectator_count"] == 0
 
-    def test_watch_private_relay_denied(self, client):
-        """GET /relays/{id}/watch on a private relay without owner_id returns 403."""
+    def test_watch_private_relay_requires_token(self, client):
+        """GET /relays/{id}/watch on a private relay without a token returns 401."""
         r = client.post(
             "/relays",
             json={
@@ -432,7 +432,7 @@ class TestSpectatorFlow:
         relay_id = r.json()["relay_id"]
 
         r = client.get(f"/relays/{relay_id}/watch")
-        assert r.status_code == 403
+        assert r.status_code == 401
 
     def test_watch_nonexistent_relay_404(self, client):
         """GET /relays/{id}/watch on missing relay returns 404."""
@@ -572,14 +572,15 @@ class TestPublicRelays:
                 "owner_id": "owner-123",
             },
         )
+        token = r.json()["token"]
         relay_id = r.json()["relay_id"]
 
-        # Without owner_id -> 403
+        # Without a participant credential -> 401
         r = client.get(f"/relays/{relay_id}")
-        assert r.status_code == 403
+        assert r.status_code == 401
 
-        # With correct owner_id -> 200
-        r = client.get(f"/relays/{relay_id}?owner_id=owner-123")
+        # A participant credential can read private state.
+        r = client.get(f"/relays/{relay_id}", headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
 
     def test_relay_list_pagination(self, client):

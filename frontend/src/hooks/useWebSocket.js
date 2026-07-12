@@ -101,6 +101,7 @@ export function useWebSocket(url, options = {}) {
 
           setConnectionStatus('reconnecting');
           reconnectTimeoutRef.current = setTimeout(() => {
+            // eslint-disable-next-line react-hooks/immutability
             connect();
           }, backoffTime);
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {

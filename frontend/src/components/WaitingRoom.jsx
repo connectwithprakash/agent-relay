@@ -52,6 +52,7 @@ export default function WaitingRoom({ relay: initialRelay, relayId, onActivate }
 
   // Sync initial relay prop updates
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (initialRelay) setRelay(initialRelay);
   }, [initialRelay]);
 

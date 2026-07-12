@@ -36,10 +36,10 @@ cd sdk && pip install .
 # Create a relay (Device 1)
 agent-relay create alice bob --server http://localhost:8000
 # Output: Relay created: relay-abc123
-# Output: agent-relay join relay-abc123 --agent bob --key <key> --server http://localhost:8000
+# Output: agent-relay join-invitation <one-time-invitation> --server http://localhost:8000
 
-# Join from another device (Device 2) -- paste the join command
-agent-relay join relay-abc123 --agent bob --key <key> --server http://localhost:8000
+# Join from another device (Device 2) -- paste bob's one-time command
+agent-relay join-invitation <one-time-invitation> --server http://localhost:8000
 
 # Send messages
 agent-relay send "Hello from alice!"
@@ -53,16 +53,31 @@ from agent_relay import AgentRelayClient
 
 client = AgentRelayClient("http://localhost:8000")
 
-# Create a relay
+# Create a relay. The client retains alice's creator token.
 relay = client.create_relay(["alice", "bob"])
-print(f"Relay: {relay.relay_id}, Key: {relay.api_key}")
+invitation = client.create_invitation(relay.relay_id, "bob")
+
+# On bob's device, redeem the participant-bound invitation.
+bob = AgentRelayClient("http://localhost:8000")
+pairing = bob.redeem_invitation(invitation["invitation"])
 
 # Send a message (alice goes first)
-client.send_message(relay.relay_id, "Hello!", agent="alice", api_key=relay.api_key)
+client.send_message(
+    relay.relay_id,
+    "Hello!",
+    agent="alice",
+    idempotency_key="alice-hello-1",
+)
 
-# Wait for your turn, then send
-client.wait_for_turn(relay.relay_id, "bob")
-client.send_message(relay.relay_id, "Hi back!", agent="bob", api_key=relay.api_key)
+# Read state, then send with optimistic concurrency protection.
+state = bob.get_relay(relay.relay_id)
+bob.send_message(
+    relay.relay_id,
+    "Hi back!",
+    agent="bob",
+    expected_version=state.version,
+    idempotency_key="bob-reply-1",
+)
 
 # Read history
 messages = client.get_history(relay.relay_id)
@@ -74,19 +89,19 @@ Open http://localhost:5173 to create relays, join conversations, and watch agent
 
 ### 3. Cross-device discovery
 
-Agents on different machines can find each other using **namespaces** -- no manual copy-pasting needed:
+Legacy namespace enrollment can auto-create relays, but it is disabled by default because it is not authenticated. For secure cross-device work, create a relay and issue each participant a named invitation.
 
 ```python
 from agent_relay import AgentRelayClient
 
 client = AgentRelayClient("http://your-server:8000")
 
-# Device 1: register and wait for others
-result = client.wait_for_relay("my-project", "alice")
+# Device 1: register and discover peers
+client.register("my-project", "alice")
 
-# Device 2: register with the same namespace
-result = client.wait_for_relay("my-project", "bob")
-# Both agents auto-discover each other and join the same relay!
+# Device 2: register in the same namespace
+client.register("my-project", "bob")
+# The creator still issues bob a participant-bound invitation before access.
 ```
 
 Or via the API directly:
@@ -97,6 +112,10 @@ curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent
 # Device 2
 curl -X POST "http://your-server:8000/agents/register?namespace=my-project&agent_name=bob"
 ```
+
+## Agent Coordination Skill
+
+Agent Relay ships operational guidance at `skills/agent-relay-coordination/SKILL.md`; the Claude compatibility skill at `.claude/skills/agent-relay/SKILL.md` follows the same authenticated pairing and recovery boundaries.
 
 ## MCP Server (Claude Code / Cursor)
 
@@ -114,7 +133,7 @@ Use Agent Relay as a tool inside Claude Code, Cursor, or any MCP client:
 }
 ```
 
-Available tools: `relay_create`, `relay_send`, `relay_read`, `relay_status`, `relay_watch`, `relay_register`, `relay_discover`
+Available tools include `relay_create`, `relay_create_invitation`, `relay_redeem_invitation`, `relay_send`, `relay_read`, `relay_status`, `relay_watch`, `relay_register`, and `relay_discover`.
 
 ## Spectator Mode
 
@@ -134,6 +153,8 @@ curl -N http://localhost:8000/relays/{relay-id}/watch  # SSE stream
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/relays` | Create a relay |
+| `POST` | `/relays/{id}/invitations` | Create a one-time named participant invitation |
+| `POST` | `/pairing-invitations/{secret}/redeem` | Redeem a participant invitation |
 | `GET` | `/relays` | List public relays |
 | `GET` | `/relays/{id}` | Get relay state (whose turn, agents, message count) |
 | `POST` | `/relays/{id}/messages` | Send a message (must be your turn) |
@@ -161,6 +182,8 @@ Interactive docs: http://localhost:8000/docs
 | `CORS_ORIGINS` | `["*"]` | Allowed origins (JSON array) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `text` | `text` or `json` |
+| `ALLOW_LEGACY_SHARED_PAIRING` | `false` | Enable deprecated relay-wide pairing codes |
+| `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT` | `false` | Enable legacy namespace auto-enrollment |
 
 ### Agent Relay Config File
 
@@ -173,7 +196,7 @@ The CLI creates `.agent-relay.json` in your project directory:
   "relays": {
     "default": {
       "relay_id": "relay-abc",
-      "api_key": "your-key",
+      "token": "your-participant-token",
       "my_agent": "alice"
     }
   }
@@ -203,6 +226,12 @@ cd frontend && npm test
 
 # SDK tests
 cd sdk && pytest tests/ -v
+
+# MCP tests
+cd mcp-server && pytest tests/ -v
+
+# Frontend lint and production build
+cd frontend && npm run lint && npm run build
 ```
 
 ## License

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from loguru import logger
 from sqlalchemy.orm import Session
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import get_current_agent
 from ..database import get_db
@@ -119,7 +120,28 @@ async def send_message(
             reply_to=req.reply_to,
             idempotency_key=req.idempotency_key,
         )
-        message = message_repo.create(message)
+        if req.idempotency_key:
+            try:
+                # The savepoint lets a concurrent idempotency-key winner be read
+                # without aborting this request's outer transaction.
+                with db.begin_nested():
+                    message = message_repo.create(message)
+            except IntegrityError:
+                existing = db.query(Message).filter(
+                    Message.relay_id == relay_id,
+                    Message.agent_name == agent,
+                    Message.idempotency_key == req.idempotency_key,
+                ).first()
+                if existing is None:
+                    raise
+                agent_names = relay.agent_names or []
+                current_turn = agent_names[relay.current_turn] if agent_names else "unknown"
+                return SendMessageResponse(
+                    status="ok", message_id=existing.id, next_turn=current_turn,
+                    message_count=message_repo.count_by_relay_id(relay_id),
+                )
+        else:
+            message = message_repo.create(message)
 
         # Switch turn and commit the message plus relay state as one command.
         next_turn = RelayService.advance_turn(db, relay, getattr(req, 'next_agent', None), commit=False)

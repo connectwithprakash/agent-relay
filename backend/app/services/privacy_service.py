@@ -33,11 +33,8 @@ class PrivacyService:
         if relay.owner_id and owner_id == relay.owner_id:
             return True
         
-        # Private relays created without an owner_id are treated as accessible
-        # since there is no owner to restrict access to
-        if not relay.owner_id:
-            return True
-        
+        # Private relays require an authenticated owner or participant; absence
+        # of owner metadata must never make a private relay public.
         return False
     
     @staticmethod

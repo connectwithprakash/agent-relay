@@ -103,10 +103,10 @@ class TestWatchEndpoint:
         response = client.get("/relays/nonexistent/watch")
         assert response.status_code == 404
 
-    def test_watch_private_relay_denied(self, client, private_relay):
+    def test_watch_private_relay_requires_participant_token(self, client, private_relay):
         relay_id = private_relay["relay_id"]
         response = client.get(f"/relays/{relay_id}/watch?owner_id=wrong-owner")
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     def test_watch_public_relay_accepted(self, client, sample_relay):
         """The watch endpoint should accept connections for public relays (not 403/404)."""
@@ -121,8 +121,8 @@ class TestWatchEndpoint:
         resp = client.get("/relays/bad-id/watch")
         assert resp.status_code == 404
 
-        # Verify 403 for private relay
-        # (already tested in test_watch_private_relay_denied)
+        # Verify unauthenticated private reads are rejected
+        # (already tested in test_watch_private_relay_requires_participant_token)
 
 
 class TestSpectatorDoesNotAffectTurns:
@@ -174,3 +174,14 @@ class TestSpectatorCountEndpoint:
     def test_spectator_count_nonexistent_relay(self, client):
         resp = client.get("/relays/nonexistent/spectators")
         assert resp.status_code == 404
+
+    def test_private_spectator_count_requires_participant_token(self, client, private_relay):
+        relay_id = private_relay["relay_id"]
+        unauthorized = client.get(f"/relays/{relay_id}/spectators")
+        assert unauthorized.status_code == 401
+
+        authorized = client.get(
+            f"/relays/{relay_id}/spectators",
+            headers={"Authorization": f"Bearer {private_relay['token']}"},
+        )
+        assert authorized.status_code == 200

@@ -4,6 +4,9 @@ primary_region = "sjc"
 [build]
   builder = "paketobuildpacks/builder:base"
 
+[deploy]
+  release_command = "alembic upgrade head"
+
 [env]
   PORT = "8000"
 

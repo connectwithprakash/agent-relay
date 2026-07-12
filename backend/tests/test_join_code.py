@@ -12,6 +12,17 @@ class TestCreateRelayHasJoinCode:
 
 
 class TestLegacyJoinByCode:
+    def test_disabled_by_default(self, client, monkeypatch):
+        created = client.post("/relays", json={"agent_names": ["alice", "bob"]}).json()
+        monkeypatch.setattr(
+            "app.routes.registry.settings.allow_legacy_shared_pairing", False
+        )
+        response = client.post(
+            f"/relays/join/{created['join_code']}", params={"agent_name": "bob"}
+        )
+        assert response.status_code == 410
+        assert "named invitation" in response.json()["detail"]
+
     def test_approved_unpaired_participant_can_pair_once(self, client):
         created = client.post("/relays", json={"agent_names": ["alice", "bob"], "is_public": True}).json()
         response = client.post(f"/relays/join/{created['join_code']}", params={"agent_name": "bob"})

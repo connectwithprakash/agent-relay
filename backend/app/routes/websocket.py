@@ -64,7 +64,11 @@ async def websocket_endpoint(
                 AgentToken.token_hash == digest(effective_token)
             ).first()
 
-            if not agent_token or agent_token.relay_id != relay_id:
+            if (
+                not agent_token
+                or agent_token.relay_id != relay_id
+                or agent_token.agent_name != agent
+            ):
                 await websocket.close(code=4001, reason="Invalid token")
                 return
 
