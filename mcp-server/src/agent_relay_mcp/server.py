@@ -384,6 +384,7 @@ def relay_info(relay_id: str = "") -> dict:
             instr_resp = _client.get(
                 f"/relays/{relay_id}/instructions",
                 params={"agent": agent_name},
+                headers=_auth_headers(),
             )
             if instr_resp.status_code == 200:
                 instr = instr_resp.json()
@@ -420,7 +421,7 @@ def relay_listen(relay_id: str = "", since_id: int = 0) -> dict:
         params["agent"] = agent
 
     try:
-        resp = _client.get(f"/relays/{relay_id}/listen", params=params)
+        resp = _client.get(f"/relays/{relay_id}/listen", params=params, headers=_auth_headers())
         resp.raise_for_status()
         result = resp.json()
 
@@ -452,7 +453,9 @@ def relay_watch(relay_id: str = "", duration: int = 5) -> dict:
     duration = min(duration, 30)
     messages = []
     try:
-        with _client.stream("GET", f"/relays/{relay_id}/watch", timeout=duration + 2) as response:
+        with _client.stream(
+            "GET", f"/relays/{relay_id}/watch", headers=_auth_headers(), timeout=duration + 2
+        ) as response:
             response.raise_for_status()
             deadline = time.monotonic() + duration
             for line in response.iter_lines():
@@ -494,7 +497,7 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
 
         # Fetch relay status and instructions so the joining agent has full context
         try:
-            status_resp = _client.get(f"/relays/{result['relay_id']}")
+            status_resp = _client.get(f"/relays/{result['relay_id']}", headers=_auth_headers())
             if status_resp.status_code == 200:
                 status = status_resp.json()
                 result["description"] = status.get("description")
@@ -517,6 +520,7 @@ def relay_join_code(join_code: str, agent_name: str) -> dict:
             instr_resp = _client.get(
                 f"/relays/{result['relay_id']}/instructions",
                 params={"agent": agent_name},
+                headers=_auth_headers(),
             )
             if instr_resp.status_code == 200:
                 instr = instr_resp.json()

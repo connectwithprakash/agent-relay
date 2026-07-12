@@ -94,6 +94,19 @@ def get_relay_or_404(db: Session, relay_id: str) -> Relay:
     return relay
 
 
+def _authorize_private_read(db: Session, relay: Relay, authorization: str | None) -> None:
+    if relay.is_public:
+        return
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token required for private relay")
+    token = db.query(AgentToken).filter(
+        AgentToken.relay_id == relay.id,
+        AgentToken.token_hash == digest(authorization[7:]),
+    ).first()
+    if not token:
+        raise HTTPException(status_code=403, detail="Token is not valid for this relay")
+
+
 def _check_and_advance_timeout(db: Session, relay: Relay) -> None:
     """If the relay has a turn timeout and it has elapsed, auto-advance the turn."""
     if relay.turn_timeout is None or relay.turn_started_at is None:
@@ -164,12 +177,7 @@ async def list_relays(
 async def get_relay_state(relay_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     """Get current relay state; private relays require a participant token."""
     relay = get_relay_or_404(db, relay_id)
-    if not relay.is_public:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Token required for private relay")
-        token = db.query(AgentToken).filter(AgentToken.relay_id == relay_id, AgentToken.token_hash == digest(authorization[7:])).first()
-        if not token:
-            raise HTTPException(status_code=403, detail="Token is not valid for this relay")
+    _authorize_private_read(db, relay, authorization)
 
     # Auto-advance if turn has timed out
     _check_and_advance_timeout(db, relay)
@@ -181,10 +189,12 @@ async def get_relay_state(relay_id: str, authorization: str | None = Header(defa
 async def get_relay_instructions(
     relay_id: str,
     agent: Optional[str] = None,
+    authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     """Get relay purpose and agent-specific instructions."""
     relay = get_relay_or_404(db, relay_id)
+    _authorize_private_read(db, relay, authorization)
     result = {
         "relay_id": relay_id,
         "description": relay.description,

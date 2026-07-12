@@ -4,7 +4,7 @@ All tests mock the module-level httpx client so no running server is needed.
 """
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 import httpx
 import pytest
@@ -265,6 +265,14 @@ class TestRelayJoinCode:
         assert result["your_instructions"] == "Review the code carefully."
         assert len(result["turn_order"]) == 2
         assert "(you)" in result["turn_order"][1]
+        assert mock_client.get.call_args_list == [
+            call("/relays/test-relay-123", headers={"Authorization": "Bearer tok-123"}),
+            call(
+                "/relays/test-relay-123/instructions",
+                params={"agent": "bob"},
+                headers={"Authorization": "Bearer tok-123"},
+            ),
+        ]
 
     @patch("agent_relay_mcp.server._client")
     def test_join_code_works_when_status_fails(self, mock_client):
@@ -306,6 +314,10 @@ class TestRelayInfo:
         assert result["message_count"] == 3
         assert result["your_instructions"] == "You are the reviewer."
         assert len(result["turn_order"]) == 2
+        assert mock_client.get.call_args_list == [
+            call("/relays/r1", headers={}),
+            call("/relays/r1/instructions", params={"agent": "alice"}, headers={}),
+        ]
 
     def test_relay_info_no_relay_id(self):
         _session.clear()

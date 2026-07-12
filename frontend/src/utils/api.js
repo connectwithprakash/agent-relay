@@ -30,23 +30,14 @@ const safeFetch = async (url, options) => {
 };
 
 /**
- * Build auth headers for a relay using its stored token
- */
-const authHeaders = (relayId) => {
-  const { getToken } = require('./auth.js');
-  const token = getToken(relayId);
-  return token ? { 'Authorization': `Bearer ${token}` } : {};
-};
-
-/**
  * Get relay state
  */
-export const getRelay = async (relayId, ownerId = null) => {
+export const getRelay = async (relayId) => {
   const url = new URL(`${API_BASE_URL}/relays/${relayId}`);
-  if (ownerId) {
-    url.searchParams.append('owner_id', ownerId);
-  }
-  const response = await safeFetch(url);
+  const { getToken } = await import('./auth.js');
+  const token = getToken(relayId);
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+  const response = await safeFetch(url, { headers });
   return handleResponse(response, 'fetch relay');
 };
 

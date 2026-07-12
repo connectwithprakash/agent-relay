@@ -283,6 +283,18 @@ class TestRelayInstructions:
         response = client.get("/relays/nonexistent/instructions")
         assert response.status_code == 404
 
+    def test_private_instructions_require_participant_token(self, client, private_relay):
+        relay_id = private_relay["relay_id"]
+        unauthorized = client.get(f"/relays/{relay_id}/instructions")
+        assert unauthorized.status_code == 401
+
+        authorized = client.get(
+            f"/relays/{relay_id}/instructions",
+            headers={"Authorization": f"Bearer {private_relay['token']}"},
+        )
+        assert authorized.status_code == 200
+        assert authorized.json()["relay_id"] == relay_id
+
 
 class TestWebhooks:
     def test_register_webhook(self, client, sample_relay):
