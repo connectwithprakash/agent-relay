@@ -5,6 +5,7 @@ import RelayDashboard from '../components/RelayDashboard';
 import SpectatorDashboard from '../components/SpectatorDashboard';
 import AgentSelector from '../components/AgentSelector';
 import WaitingRoom from '../components/WaitingRoom';
+import { getAgent } from '../utils/auth';
 
 function isRelayWaiting(relay) {
   if (!relay) return false;
@@ -17,7 +18,7 @@ function isRelayWaiting(relay) {
 export default function RelayPage() {
   const { relayId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const agent = searchParams.get('agent');
+  const agent = getAgent(relayId);
   const mode = searchParams.get('mode');
 
   const { relay, loading, error, updateRelay } = useRelay(relayId);

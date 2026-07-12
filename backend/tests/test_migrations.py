@@ -57,6 +57,22 @@ def test_upgrade_handles_current_tables_created_before_revision_011(tmp_path):
     assert "version" in {column["name"] for column in inspector.get_columns("relays")}
 
 
+def test_revision_011_downgrade_restores_revision_010_schema(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'downgrade-011.db'}"
+    _upgrade(database_url, "010")
+    engine = create_engine(database_url)
+    baseline_relays = {column["name"] for column in inspect(engine).get_columns("relays")}
+    baseline_messages = {column["name"] for column in inspect(engine).get_columns("messages")}
+
+    _upgrade(database_url, "011")
+    _downgrade(database_url, "010")
+
+    inspector = inspect(engine)
+    assert {column["name"] for column in inspector.get_columns("relays")} == baseline_relays
+    assert {column["name"] for column in inspector.get_columns("messages")} == baseline_messages
+    assert "pairing_invitations" not in inspector.get_table_names()
+
+
 def test_upgrade_preserves_newest_creator_credential(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'duplicates.db'}"
     _upgrade(database_url, "011")

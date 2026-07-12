@@ -110,9 +110,30 @@ def downgrade():
         op.drop_index("ix_agent_tokens_token_prefix", table_name="agent_tokens")
     if "ix_agent_tokens_token_hash" in token_indexes:
         op.drop_index("ix_agent_tokens_token_hash", table_name="agent_tokens")
-    if "token_prefix" in token_columns:
-        op.drop_column("agent_tokens", "token_prefix")
-    if "token_hash" in token_columns:
-        op.drop_column("agent_tokens", "token_hash")
-    if "version" in _column_names(bind, "relays"):
-        op.drop_column("relays", "version")
+    # A canonical revision-010 database has no agent_tokens table; revision 011
+    # created it. Historical create_all databases can have the legacy `token`
+    # table already, in which case preserve that table and remove only 011 fields.
+    if "token" not in token_columns:
+        op.drop_table("agent_tokens")
+    else:
+        with op.batch_alter_table("agent_tokens") as batch:
+            if "token_prefix" in token_columns:
+                batch.drop_column("token_prefix")
+            if "token_hash" in token_columns:
+                batch.drop_column("token_hash")
+    if "idempotency_key" in _column_names(bind, "messages"):
+        with op.batch_alter_table("messages") as batch:
+            batch.drop_column("idempotency_key")
+    relay_columns = _column_names(bind, "relays")
+    with op.batch_alter_table("relays") as batch:
+        for column_name in (
+            "max_skip_count",
+            "turns_waited",
+            "min_agents",
+            "max_agents",
+            "agent_instructions",
+            "description",
+            "version",
+        ):
+            if column_name in relay_columns:
+                batch.drop_column(column_name)

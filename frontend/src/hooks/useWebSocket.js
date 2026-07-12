@@ -62,6 +62,7 @@ export function useWebSocket(url, options = {}) {
       const ws = new WebSocket(url);
 
       ws.onopen = () => {
+        if (wsRef.current !== ws) return;
         console.log('[WebSocket] Connected');
         setConnectionStatus('connected');
         reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
@@ -69,6 +70,7 @@ export function useWebSocket(url, options = {}) {
       };
 
       ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
         try {
           const message = JSON.parse(event.data);
           if (callbacksRef.current.onMessage) callbacksRef.current.onMessage(message);
@@ -78,12 +80,15 @@ export function useWebSocket(url, options = {}) {
       };
 
       ws.onerror = (error) => {
+        if (wsRef.current !== ws) return;
         console.error('[WebSocket] Error:', error);
         setConnectionStatus('error');
         if (callbacksRef.current.onError) callbacksRef.current.onError(error);
       };
 
       ws.onclose = (event) => {
+        // Ignore close events from sockets intentionally replaced by a newer one.
+        if (wsRef.current !== ws) return;
         console.log('[WebSocket] Disconnected:', event.reason);
         setConnectionStatus('disconnected');
         wsRef.current = null;
