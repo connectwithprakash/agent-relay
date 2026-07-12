@@ -29,6 +29,19 @@ def _upgrade(database_url: str, revision: str) -> None:
     )
 
 
+def _downgrade(database_url: str, revision: str) -> None:
+    env = os.environ.copy()
+    env["DATABASE_URL"] = database_url
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", revision],
+        cwd=BACKEND_DIR,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_upgrade_handles_current_tables_created_before_revision_011(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'mixed-schema.db'}"
     _upgrade(database_url, "010")
@@ -96,6 +109,21 @@ def test_upgrade_preserves_newest_creator_credential(tmp_path):
     assert len(tokens) == 1
     assert tokens[0].token_hash == "new-creator-hash"
     assert tokens[0].is_creator is True
+
+    _downgrade(database_url, "011")
+    with engine.connect() as connection:
+        restored = connection.execute(
+            text(
+                "SELECT token_hash FROM agent_tokens "
+                "WHERE relay_id='relay-legacy' AND agent_name='alice'"
+            )
+        ).scalars().all()
+    assert set(restored) == {
+        "old-creator-hash",
+        "new-creator-hash",
+        "newest-participant-hash",
+    }
+    assert "agent_token_dedup_backup" not in inspect(engine).get_table_names()
 
 
 def test_upgrade_hashes_and_removes_legacy_plaintext_tokens(tmp_path):

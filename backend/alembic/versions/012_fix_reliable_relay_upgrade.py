@@ -43,6 +43,25 @@ def _deduplicate_credentials(bind, columns: set[str]) -> None:
         else:
             seen.add(identity)
     if duplicate_ids:
+        duplicate_rows = bind.execute(
+            sa.text(
+                "SELECT id AS original_id, relay_id, agent_name, token_hash, "
+                "token_prefix, is_creator, created_at FROM agent_tokens "
+                "WHERE id IN :ids"
+            ).bindparams(sa.bindparam("ids", expanding=True)),
+            {"ids": duplicate_ids},
+        ).mappings().all()
+        backup = sa.table(
+            "agent_token_dedup_backup",
+            sa.column("original_id"),
+            sa.column("relay_id"),
+            sa.column("agent_name"),
+            sa.column("token_hash"),
+            sa.column("token_prefix"),
+            sa.column("is_creator"),
+            sa.column("created_at"),
+        )
+        bind.execute(sa.insert(backup), duplicate_rows)
         tokens = sa.table("agent_tokens", sa.column("id"))
         bind.execute(sa.delete(tokens).where(tokens.c.id.in_(duplicate_ids)))
 
@@ -50,6 +69,17 @@ def _deduplicate_credentials(bind, columns: set[str]) -> None:
 def upgrade():
     bind = op.get_bind()
     dialect = bind.dialect.name
+    op.create_table(
+        "agent_token_dedup_backup",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("original_id", sa.Integer(), nullable=False),
+        sa.Column("relay_id", sa.String(), nullable=False),
+        sa.Column("agent_name", sa.String(), nullable=False),
+        sa.Column("token_hash", sa.String(64), nullable=False),
+        sa.Column("token_prefix", sa.String(16), nullable=False),
+        sa.Column("is_creator", sa.Boolean(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=True),
+    )
     join_code = next(
         column
         for column in sa.inspect(bind).get_columns("relays")
@@ -136,5 +166,14 @@ def downgrade():
     if "uq_agent_tokens_relay_agent" in _unique_names(bind):
         with op.batch_alter_table("agent_tokens") as batch:
             batch.drop_constraint("uq_agent_tokens_relay_agent", type_="unique")
+    bind.execute(
+        sa.text(
+            "INSERT INTO agent_tokens "
+            "(relay_id, agent_name, token_hash, token_prefix, is_creator, created_at) "
+            "SELECT relay_id, agent_name, token_hash, token_prefix, is_creator, created_at "
+            "FROM agent_token_dedup_backup"
+        )
+    )
+    op.drop_table("agent_token_dedup_backup")
     # Credential hashing and the join-code widening are intentionally retained:
     # restoring plaintext secrets or narrowing live 48-character values is unsafe.

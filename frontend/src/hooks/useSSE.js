@@ -38,7 +38,9 @@ export function useSSE(url, options = {}) {
             signal: controller.signal,
           });
           if (!response.ok || !response.body) {
-            throw new Error(`SSE request failed (${response.status})`);
+            const error = new Error(`SSE request failed (${response.status})`);
+            error.status = response.status;
+            throw error;
           }
           setConnectionStatus('connected');
           callbacksRef.current.onOpen?.();
@@ -71,6 +73,10 @@ export function useSSE(url, options = {}) {
           console.error('[SSE] Error:', error);
           setConnectionStatus('error');
           callbacksRef.current.onError?.(error);
+          if (error.status && error.status >= 400 && error.status < 500
+              && error.status !== 408 && error.status !== 429) {
+            return;
+          }
         }
         if (!controller.signal.aborted) {
           await new Promise((resolve) => setTimeout(resolve, 3000));

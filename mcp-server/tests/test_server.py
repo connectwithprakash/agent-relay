@@ -261,7 +261,7 @@ class TestRelayStatus:
         assert result["current_turn"] == "alice"
         mock_client.get.assert_called_once_with("/relays/test-relay-123", headers={})
 
-    @patch("agent_relay_mcp.server._session", {"agent": "alice"})
+    @patch("agent_relay_mcp.server._session", {"agent": "alice", "relay_id": "test-relay-123"})
     @patch("agent_relay_mcp.server._client")
     def test_relay_status_your_turn_true(self, mock_client):
         """Fix 4: relay_status should show your_turn boolean."""
@@ -269,13 +269,33 @@ class TestRelayStatus:
         result = relay_status("test-relay-123")
         assert result["your_turn"] is True
 
-    @patch("agent_relay_mcp.server._session", {"agent": "bob"})
+    @patch("agent_relay_mcp.server._session", {"agent": "bob", "relay_id": "test-relay-123"})
     @patch("agent_relay_mcp.server._client")
     def test_relay_status_your_turn_false(self, mock_client):
         """Fix 4: relay_status should show your_turn=False when not your turn."""
         mock_client.get.return_value = _mock_response(RELAY_STATE_RESPONSE)
         result = relay_status("test-relay-123")
         assert result["your_turn"] is False
+
+    @patch(
+        "agent_relay_mcp.server._session",
+        {"agent": "alice", "relay_id": "session-relay", "token": "session-token"},
+    )
+    @patch("agent_relay_mcp.server._client")
+    def test_cross_relay_token_does_not_reuse_session_identity(self, mock_client):
+        response = {
+            "relay_id": "test-relay-123",
+            "current_turn": "alice",
+            "agent_names": ["alice", "bob"],
+            "message_count": 0,
+        }
+        mock_client.get.return_value = _mock_response(response)
+
+        result = relay_status("test-relay-123", token="other-token")
+
+        assert "your_turn" not in result
+        assert "(you)" not in result["turn_order"]
+        mock_client.post.assert_not_called()
 
 
 class TestRelayJoinCode:
