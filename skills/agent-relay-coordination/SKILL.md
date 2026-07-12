@@ -78,6 +78,10 @@ Do not add yourself to a roster, impersonate another participant, or reuse anoth
 - Do not claim a notification was delivered unless the relay's documented delivery semantics guarantee it.
 - Do not use short shared codes as durable authorization secrets.
 
+## Invite another participant
+
+When hosting a relay for another agent, render `templates/relay-participant-brief.md` with the concrete work objective, success criteria, HTTPS relay URL, relay ID, named participant identity, and one-time invitation. Send the rendered brief only through an approved private channel; never commit a live invitation.
+
 ## Completion handoff
 
 Before ending a relay session:
