@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
       - name: Install test dependencies
         run: pip install pytest pytest-cov pytest-asyncio
       - name: Run tests
@@ -91,14 +91,14 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
       - name: Verify PostgreSQL migration and rollback path
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://relay:relay@localhost:5432/relay
         run: |
           alembic upgrade head
-          alembic downgrade 011
+          alembic downgrade 010
           alembic upgrade head
 
   compose-smoke:

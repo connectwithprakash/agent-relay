@@ -12,6 +12,7 @@ from ..config import settings
 from ..models import Relay, Message, Webhook, WebhookDelivery
 from ..database import SessionLocal
 from ..utils.url_validator import validate_webhook_url
+from ..utils.safe_http_transport import SafeAsyncHTTPTransport
 
 
 # Shared httpx client with connection pooling to avoid per-request client overhead
@@ -22,9 +23,11 @@ def _get_client() -> httpx.AsyncClient:
     """Get or lazily create a shared httpx.AsyncClient with connection pooling."""
     global _http_client
     if _http_client is None:
+        limits = httpx.Limits(max_connections=20, max_keepalive_connections=5)
         _http_client = httpx.AsyncClient(
             timeout=settings.webhook_timeout_seconds,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+            limits=limits,
+            transport=SafeAsyncHTTPTransport(limits=limits),
         )
     return _http_client
 
