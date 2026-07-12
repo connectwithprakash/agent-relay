@@ -1,7 +1,6 @@
 """
 Agent registry endpoints for cross-device discovery
 """
-import random
 import secrets
 import string
 from datetime import datetime, timezone
@@ -239,7 +238,8 @@ async def register_agent(
             # Create relay with all waiting agents
             agent_names = [w.agent_name for w in waiting]
 
-            join_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+            alphabet = string.ascii_uppercase + string.digits
+            join_code = "".join(secrets.choice(alphabet) for _ in range(6))
             relay = Relay(
                 id=f"relay-{secrets.token_urlsafe(8)}",
                 agent_names=agent_names,
