@@ -2,6 +2,7 @@
 Application configuration using pydantic-settings
 """
 from typing import Literal
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,8 +39,13 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = "text"
 
     # Webhooks
-    webhook_max_retries: int = 3
-    webhook_timeout_seconds: float = 5.0
+    webhook_max_retries: int = Field(default=3, ge=1)
+    webhook_timeout_seconds: float = Field(default=5.0, gt=0)
+    webhook_outbox_poll_seconds: float = Field(default=0.5, gt=0)
+    webhook_outbox_batch_size: int = Field(default=20, ge=1)
+    webhook_outbox_lease_seconds: int = Field(default=30, ge=1)
+    webhook_outbox_retry_base_seconds: float = Field(default=1.0, gt=0)
+    webhook_outbox_retention_days: int = Field(default=30, ge=1)
 
     @property
     def is_sqlite(self) -> bool:

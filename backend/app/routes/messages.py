@@ -177,6 +177,9 @@ async def send_message(
             db.rollback()
             raise HTTPException(status_code=409, detail="Relay state changed; refresh and retry")
         db.expire(relay)
+        outbox_count = WebhookService.enqueue_webhooks(
+            db, relay, message, relay.current_turn
+        )
         db.commit()
         db.refresh(message)
         message_count = message_repo.count_by_relay_id(relay_id)
@@ -195,9 +198,10 @@ async def send_message(
         "version": observed_version + 1,
     }
 
-    # Broadcast via WebSocket and trigger webhooks
+    # WebSocket delivery is best effort; webhook delivery is durable in the outbox.
     asyncio.create_task(manager.broadcast_message(relay_id, message_dict))
-    await WebhookService.trigger_webhooks(db, relay, message, relay.current_turn)
+    if outbox_count:
+        WebhookService.notify_dispatcher()
 
     return SendMessageResponse(
         status="ok",

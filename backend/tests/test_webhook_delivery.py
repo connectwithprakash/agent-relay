@@ -1,8 +1,6 @@
-"""
-Tests for webhook delivery service
-"""
+"""Tests for the durable transactional webhook outbox."""
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -11,209 +9,274 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base, Relay, Message, Webhook, WebhookDelivery
+from app.models import (
+    Base,
+    Message,
+    Relay,
+    Webhook,
+    WebhookDelivery,
+    WebhookOutbox,
+)
 from app.services.webhook_service import WebhookService
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture()
 def db_session():
-    """Provide an in-memory SQLite session for webhook delivery tests."""
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
     Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(bind=engine)
     session = Session()
+    session.info["factory"] = Session
     yield session
     session.close()
 
 
 @pytest.fixture()
-def relay(db_session):
-    """Create a test relay."""
-    r = Relay(
+def event_data(db_session):
+    relay = Relay(
         id="relay-test",
         agent_names=["alice", "bob"],
         agent_count=2,
-        current_turn=0,
+        current_turn=1,
         is_public=True,
     )
-    db_session.add(r)
-    db_session.commit()
-    return r
-
-
-@pytest.fixture()
-def message(db_session, relay):
-    """Create a test message."""
-    msg = Message(
+    message = Message(
         relay_id=relay.id,
         agent_index=0,
         agent_name="alice",
         content="hello",
         type="text",
-        created_at=datetime.utcnow(),
     )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-    return msg
-
-
-@pytest.fixture()
-def webhook(db_session, relay):
-    """Create a test webhook targeting agent index 1 (bob)."""
-    wh = Webhook(
+    webhook = Webhook(
         relay_id=relay.id,
         agent_index=1,
         agent_name="bob",
         url="https://example.com/hook",
     )
-    db_session.add(wh)
+    db_session.add_all([relay, message, webhook])
+    db_session.flush()
+    return relay, message, webhook
+
+
+def _factory(db_session):
+    return db_session.info["factory"]
+
+
+def _claimed_event(db_session, event_data):
+    relay, message, _ = event_data
+    WebhookService.enqueue_webhooks(db_session, relay, message, 1)
     db_session.commit()
-    db_session.refresh(wh)
-    return wh
+    with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+        return WebhookService._claim_batch()[0]
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+class TestTransactionalEnqueue:
+    def test_enqueue_uses_callers_transaction(self, db_session, event_data):
+        relay, message, _ = event_data
+        assert WebhookService.enqueue_webhooks(db_session, relay, message, 1) == 1
+        assert db_session.query(WebhookOutbox).count() == 1
 
-class TestTriggerWebhooks:
-    def test_trigger_webhooks_creates_tasks(self, db_session, relay, message, webhook):
-        """trigger_webhooks should create an asyncio task for each matching webhook."""
-        def capture_task(coro):
-            coro.close()
-            future = asyncio.get_event_loop().create_future()
-            future.set_result(None)
-            return future
-        with patch("asyncio.create_task", side_effect=capture_task) as mock_create_task:
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService.trigger_webhooks(db_session, relay, message, target_agent_index=1)
+        db_session.rollback()
+
+        assert db_session.query(Message).count() == 0
+        assert db_session.query(WebhookOutbox).count() == 0
+
+    def test_enqueue_snapshots_target_and_payload(self, db_session, event_data):
+        relay, message, webhook = event_data
+        WebhookService.enqueue_webhooks(db_session, relay, message, 1)
+        db_session.commit()
+
+        event = db_session.query(WebhookOutbox).one()
+        assert event.webhook_id == webhook.id
+        assert event.target_url == webhook.url
+        assert event.payload["message_id"] == message.id
+        assert event.payload["content"] == "hello"
+        assert event.status == "pending"
+
+    def test_enqueue_only_targets_current_recipient(self, db_session, event_data):
+        relay, message, _ = event_data
+        assert WebhookService.enqueue_webhooks(db_session, relay, message, 0) == 0
+        db_session.commit()
+        assert db_session.query(WebhookOutbox).count() == 0
+
+
+class TestClaiming:
+    def test_claim_is_exclusive(self, db_session, event_data):
+        _claimed_event(db_session, event_data)
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            assert WebhookService._claim_batch() == []
+
+    def test_stale_lease_is_reclaimed(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        session = _factory(db_session)()
+        row = session.get(WebhookOutbox, event["id"])
+        row.locked_at = datetime.utcnow() - timedelta(minutes=5)
+        session.commit()
+        session.close()
+
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            reclaimed = WebhookService._claim_batch()
+
+        assert len(reclaimed) == 1
+        assert reclaimed[0]["id"] == event["id"]
+        assert reclaimed[0]["lock_token"] != event["lock_token"]
+
+    def test_events_for_one_webhook_are_claimed_in_order(self, db_session, event_data):
+        relay, first_message, _ = event_data
+        WebhookService.enqueue_webhooks(db_session, relay, first_message, 1)
+        second_message = Message(
+            relay_id=relay.id,
+            agent_index=0,
+            agent_name="alice",
+            content="second",
+            type="text",
+        )
+        db_session.add(second_message)
+        db_session.flush()
+        WebhookService.enqueue_webhooks(db_session, relay, second_message, 1)
+        db_session.commit()
+
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            first_claim = WebhookService._claim_batch()
+            second_claim = WebhookService._claim_batch()
+
+        assert [event["message_id"] for event in first_claim] == [first_message.id]
+        assert second_claim == []
+
+
+class TestAttemptResults:
+    def test_success_completes_outbox_and_logs_delivery(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            WebhookService._complete_attempt(event, delivered=True, retryable=False)
+
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "delivered"
+        assert row.attempts == 1
+        assert row.delivered_at is not None
+        assert db_session.query(WebhookDelivery).one().status == "success"
+
+    def test_retry_uses_durable_backoff(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)), patch(
+            "app.services.webhook_service.settings.webhook_outbox_retry_base_seconds", 2
+        ):
+            before = datetime.utcnow()
+            WebhookService._complete_attempt(
+                event, delivered=False, retryable=True, error_message="offline"
             )
-            assert mock_create_task.call_count == 1
 
-    def test_trigger_webhooks_no_match(self, db_session, relay, message, webhook):
-        """No tasks should be created when no webhooks match the target agent index."""
-        with patch("asyncio.create_task") as mock_create_task:
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService.trigger_webhooks(db_session, relay, message, target_agent_index=0)
-            )
-            assert mock_create_task.call_count == 0
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "pending"
+        assert row.attempts == 1
+        assert row.next_attempt_at >= before + timedelta(seconds=2)
+        assert db_session.query(WebhookDelivery).one().status == "retrying"
 
-
-class TestDeliverWebhook:
-    def test_deliver_webhook_success(self, db_session, webhook, message):
-        """A successful POST should log delivery as 'success'."""
-        mock_response = MagicMock(spec=httpx.Response)
-        mock_response.status_code = 200
-
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post = AsyncMock(return_value=mock_response)
-
-        with patch("app.services.webhook_service._get_client", return_value=mock_client), \
-             patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
-             patch.object(db_session, "close"):
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService.deliver_webhook(webhook, message)
+    def test_non_retryable_response_goes_dead(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            WebhookService._complete_attempt(
+                event, delivered=False, retryable=False, error_message="HTTP 400"
             )
 
-        mock_client.post.assert_called_once()
-        # Verify delivery was logged
-        deliveries = db_session.query(WebhookDelivery).all()
-        assert len(deliveries) == 1
-        assert deliveries[0].status == "success"
-        assert deliveries[0].attempts == 1
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "dead"
+        assert db_session.query(WebhookDelivery).one().status == "failed"
 
-    def test_deliver_webhook_revalidates_target_before_connecting(
-        self, db_session, webhook, message
+    def test_retry_limit_dead_letters_event(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        event["attempts"] = 3
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)), patch(
+            "app.services.webhook_service.settings.webhook_max_retries", 3
+        ):
+            WebhookService._complete_attempt(
+                event, delivered=False, retryable=True, error_message="still offline"
+            )
+
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "dead"
+        assert row.attempts == 3
+
+    def test_deleted_webhook_does_not_block_outbox_completion(
+        self, db_session, event_data
     ):
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        event = _claimed_event(db_session, event_data)
+        webhook = db_session.get(Webhook, event["webhook_id"])
+        db_session.delete(webhook)
+        db_session.commit()
 
-        with patch("app.services.webhook_service._get_client", return_value=mock_client), \
-             patch("app.services.webhook_service.validate_webhook_url", return_value=False), \
-             patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
-             patch.object(db_session, "close"):
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService.deliver_webhook(webhook, message)
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            WebhookService._complete_attempt(event, delivered=True, retryable=False)
+
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "delivered"
+        assert db_session.query(WebhookDelivery).count() == 0
+
+    def test_stale_worker_cannot_complete_reclaimed_event(self, db_session, event_data):
+        stale_event = _claimed_event(db_session, event_data)
+        session = _factory(db_session)()
+        row = session.get(WebhookOutbox, stale_event["id"])
+        row.locked_at = datetime.utcnow() - timedelta(minutes=5)
+        session.commit()
+        session.close()
+        with patch("app.services.webhook_service.SessionLocal", _factory(db_session)):
+            current_event = WebhookService._claim_batch()[0]
+            WebhookService._complete_attempt(
+                stale_event, delivered=True, retryable=False
             )
 
-        mock_client.post.assert_not_called()
-        delivery = db_session.query(WebhookDelivery).one()
-        assert delivery.status == "failed"
-        assert "public address" in delivery.error_message
-
-    def test_deliver_webhook_retry(self, db_session, webhook, message):
-        """Failed attempts should be retried with exponential backoff."""
-        mock_client = AsyncMock(spec=httpx.AsyncClient)
-        mock_client.post = AsyncMock(side_effect=[
-            Exception("Connection refused"),
-            Exception("Connection refused"),
-            Exception("Connection refused"),
-        ])
-
-        with patch("app.services.webhook_service._get_client", return_value=mock_client), \
-             patch("app.services.webhook_service.settings") as mock_settings, \
-             patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
-             patch.object(db_session, "close"), \
-             patch("asyncio.sleep", new_callable=AsyncMock):
-            mock_settings.webhook_max_retries = 3
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService.deliver_webhook(webhook, message)
-            )
-
-        assert mock_client.post.call_count == 3
-        # Should log a failed delivery after all retries exhausted
-        deliveries = db_session.query(WebhookDelivery).all()
-        assert len(deliveries) == 1
-        assert deliveries[0].status == "failed"
-        assert deliveries[0].attempts == 3
+        row = db_session.get(WebhookOutbox, current_event["id"])
+        db_session.refresh(row)
+        assert row.status == "processing"
+        assert row.lock_token == current_event["lock_token"]
+        assert db_session.query(WebhookDelivery).count() == 0
 
 
-class TestLogDelivery:
-    def test_log_delivery_creates_record(self, db_session):
-        """_log_delivery should create a WebhookDelivery record in the database."""
-        with patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
-             patch.object(db_session, "close"):
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService._log_delivery(
-                    webhook_id=1,
-                    message_id=1,
-                    status="success",
-                    attempts=1,
-                    error_message=None,
-                )
-            )
+class TestHTTPDelivery:
+    def test_delivery_sends_deduplication_headers(self, db_session, event_data):
+        event = _claimed_event(db_session, event_data)
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.post.return_value = response
 
-        deliveries = db_session.query(WebhookDelivery).all()
-        assert len(deliveries) == 1
-        assert deliveries[0].webhook_id == 1
-        assert deliveries[0].message_id == 1
-        assert deliveries[0].status == "success"
-        assert deliveries[0].attempts == 1
-        assert deliveries[0].error_message is None
+        with patch("app.services.webhook_service._get_client", return_value=client), patch(
+            "app.services.webhook_service.validate_webhook_url", return_value=True
+        ), patch(
+            "app.services.webhook_service.SessionLocal", _factory(db_session)
+        ):
+            asyncio.run(WebhookService._deliver_event(event))
 
-    def test_log_delivery_with_error(self, db_session):
-        """_log_delivery should store error messages for failed deliveries."""
-        with patch("app.services.webhook_service.SessionLocal", return_value=db_session), \
-             patch.object(db_session, "close"):
-            asyncio.get_event_loop().run_until_complete(
-                WebhookService._log_delivery(
-                    webhook_id=2,
-                    message_id=3,
-                    status="failed",
-                    attempts=3,
-                    error_message="Connection refused",
-                )
-            )
+        headers = client.post.await_args.kwargs["headers"]
+        assert headers["X-Agent-Relay-Event-ID"] == str(event["id"])
+        assert headers["X-Agent-Relay-Attempt"] == "1"
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "delivered"
 
-        deliveries = db_session.query(WebhookDelivery).all()
-        assert len(deliveries) == 1
-        assert deliveries[0].status == "failed"
-        assert deliveries[0].error_message == "Connection refused"
+    def test_ssrf_revalidation_dead_letters_without_connecting(
+        self, db_session, event_data
+    ):
+        event = _claimed_event(db_session, event_data)
+        client = AsyncMock(spec=httpx.AsyncClient)
+        with patch("app.services.webhook_service._get_client", return_value=client), patch(
+            "app.services.webhook_service.validate_webhook_url", return_value=False
+        ), patch(
+            "app.services.webhook_service.SessionLocal", _factory(db_session)
+        ):
+            asyncio.run(WebhookService._deliver_event(event))
+
+        client.post.assert_not_awaited()
+        row = db_session.get(WebhookOutbox, event["id"])
+        db_session.refresh(row)
+        assert row.status == "dead"
+        assert "public address" in row.last_error
