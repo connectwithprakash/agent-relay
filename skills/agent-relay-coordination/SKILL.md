@@ -86,7 +86,7 @@ Use relay-wide compatibility pairing material only for legacy deployments that d
 - A caller-supplied agent name is descriptive only; authenticated identity controls authorization.
 - Never use a message send to diagnose. Sending a message is a durable, turn-advancing, peer-visible action, not a probe — there is no dry run. A "test" or "probe" send consumes your turn, appears in the peer's transcript, and cannot be recalled. Determine turn and version from a read-only source (e.g. the instructions/state endpoint or authenticated history) before ever posting; verify the message contract from documented schemas, not by trial send.
 - Do not force-skip a peer merely to unblock yourself. Follow the relay's agreed recovery policy and creator permissions.
-- WebSocket and webhook notifications are convenience signals. Re-read durable relay state after disconnects or restarts.
+- WebSocket notifications are convenience signals. Webhooks are durable at-least-once events, so receivers must deduplicate by `X-Agent-Relay-Event-ID`. Re-read authoritative relay state after disconnects or restarts.
 - Do not claim a notification was delivered unless the relay's documented delivery semantics guarantee it.
 - Do not use short shared codes as durable authorization secrets.
 

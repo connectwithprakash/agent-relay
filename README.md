@@ -179,6 +179,18 @@ Interactive docs: http://localhost:8000/docs
 | `LOG_FORMAT` | `text` | `text` or `json` |
 | `ALLOW_LEGACY_SHARED_PAIRING` | `false` | Enable deprecated relay-wide pairing codes |
 | `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT` | `false` | Enable legacy namespace auto-enrollment |
+| `WEBHOOK_MAX_RETRIES` | `3` | Maximum durable delivery attempts before dead-lettering |
+| `WEBHOOK_TIMEOUT_SECONDS` | `5.0` | Timeout for each webhook HTTP attempt |
+| `WEBHOOK_OUTBOX_POLL_SECONDS` | `0.5` | Idle dispatcher polling interval |
+| `WEBHOOK_OUTBOX_BATCH_SIZE` | `20` | Maximum events claimed per dispatcher batch |
+| `WEBHOOK_OUTBOX_LEASE_SECONDS` | `30` | Time before an abandoned processing lease can be reclaimed |
+| `WEBHOOK_OUTBOX_RETRY_BASE_SECONDS` | `1.0` | Base delay for exponential retry backoff |
+
+### Durable webhook delivery
+
+Message creation, turn advancement, and matching webhook outbox rows commit in one database transaction. The in-process dispatcher leases due rows, revalidates targets against SSRF immediately before connecting, and retries network failures, HTTP 408/429, and 5xx responses. Other 4xx responses are terminal. Exhausted events remain in `webhook_outbox` with `status='dead'` and the last error for operational inspection.
+
+Delivery is **at least once** because a worker can crash after the receiver accepts an event but before the success state commits. Receivers should persist and deduplicate the `X-Agent-Relay-Event-ID` header. `X-Agent-Relay-Attempt` reports the current attempt number.
 
 ### Agent Relay Config File
 
@@ -207,10 +219,10 @@ This release changes authentication defaults and database constraints. Before up
 1. Take a database snapshot and audit duplicate participant credentials with `SELECT relay_id, agent_name, COUNT(*) FROM agent_tokens GROUP BY relay_id, agent_name HAVING COUNT(*) > 1`.
 2. Upgrade SDK, CLI, MCP, and browser clients so private reads use bearer tokens and new participants redeem named invitations.
 3. If a staged transition is required, temporarily set `ALLOW_LEGACY_SHARED_PAIRING=true` and/or `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT=true`; remove both flags after issuing participant credentials.
-4. Run `alembic upgrade head`. Duplicate credential rows removed to enforce one credential per participant are retained, hashed, in `agent_token_dedup_backup` for rollback recovery. Plaintext bearer credentials are never retained.
+4. Run `alembic upgrade head`. This also creates the webhook outbox. Duplicate credential rows removed to enforce one credential per participant are retained, hashed, in `agent_token_dedup_backup` for rollback recovery. Plaintext bearer credentials are never retained.
 5. Issue new named invitations for any participant that cannot authenticate, then verify private state, history, SSE, WebSocket, and message sends before completing rollout.
 
-For an application rollback, record `fly releases --app agent-relay-api` before deployment. Restore the pre-upgrade database snapshot, then run `fly releases rollback <release-version> --app agent-relay-api`. If no snapshot is available, run `fly ssh console --app agent-relay-api -C "alembic downgrade 011"` before rolling back the application release. This removes the new uniqueness constraint and restores backed-up duplicate hashed credentials, but intentionally does not recreate plaintext tokens or narrow long pairing secrets. Rotate participant credentials after any uncertain or partial rollback.
+For an application rollback, record `fly releases --app agent-relay-api` before deployment. Restore the pre-upgrade database snapshot, then run `fly releases rollback <release-version> --app agent-relay-api`. To roll back only the outbox release before rolling back the application, first stop message writes and inspect or drain pending rows, then run `fly ssh console --app agent-relay-api -C "alembic downgrade 012"`. Downgrading drops all outbox state, so a database snapshot is required if pending deliveries must be retained.
 
 ## Project Structure
 

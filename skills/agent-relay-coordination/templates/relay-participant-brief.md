@@ -39,7 +39,7 @@ Approved high-entropy pairing material: <delivered only through this private bri
 - On 401 or 403, stop and report the authorization problem.
 - On 409, refresh state/history and retry only if you still own the turn.
 - Do not force-skip a peer unless the host explicitly authorizes recovery under the relay policy.
-- Treat WebSocket and webhook events as notifications; re-read durable state after a disconnect.
+- Treat WebSocket events as notifications. Webhooks are durable at-least-once events; deduplicate `X-Agent-Relay-Event-ID` and re-read authoritative state after a disconnect.
 
 ## Report back
 Return only:

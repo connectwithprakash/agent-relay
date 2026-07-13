@@ -107,6 +107,36 @@ class WebhookDelivery(Base):
         return f"<WebhookDelivery {self.id} status={self.status}>"
 
 
+class WebhookOutbox(Base):
+    """Durable at-least-once webhook delivery event."""
+    __tablename__ = "webhook_outbox"
+    __table_args__ = (
+        UniqueConstraint("webhook_id", "message_id", name="uq_webhook_outbox_event"),
+        Index("ix_webhook_outbox_due", "status", "next_attempt_at"),
+        Index("ix_webhook_outbox_lock", "status", "locked_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    webhook_id = Column(Integer, nullable=False)
+    message_id = Column(Integer, nullable=False)
+    relay_id = Column(String, nullable=False)
+    target_url = Column(Text, nullable=False)
+    payload = Column(JSON, nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    locked_at = Column(DateTime, nullable=True)
+    lock_token = Column(String(36), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    delivered_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<WebhookOutbox {self.id} status={self.status}>"
+
+
 class AgentPresence(Base):
     """Tracks agent presence/heartbeat within a relay"""
     __tablename__ = "agent_presence"
