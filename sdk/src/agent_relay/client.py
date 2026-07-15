@@ -11,6 +11,9 @@ from ._utils import raise_for_status as _raise_for_status
 
 
 _DEFAULT_RETRY_AFTER = 5.0
+_SAFE_RETRY_METHODS = frozenset({"GET"})
+_TRANSIENT_READ_STATUS_CODES = frozenset(range(500, 600))
+_TRANSIENT_READ_RETRY_BASE_SECONDS = 0.5
 
 
 class AgentRelayClient:
@@ -51,12 +54,28 @@ class AgentRelayClient:
             del self._client.headers["Authorization"]
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Send an HTTP request with automatic retry on 429 Rate Limit responses."""
+        """Send a request with bounded retries for safe transient failures."""
+        method = method.upper()
         for attempt in range(1, self.max_retries + 1):
-            resp = self._client.request(method, url, **kwargs)
-            if resp.status_code != 429 or attempt == self.max_retries:
+            try:
+                resp = self._client.request(method, url, **kwargs)
+            except httpx.TransportError:
+                if method not in _SAFE_RETRY_METHODS or attempt == self.max_retries:
+                    raise
+                time.sleep(_TRANSIENT_READ_RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+                continue
+
+            retry_after = None
+            if resp.status_code == 429:
+                retry_after = _DEFAULT_RETRY_AFTER
+            elif (
+                method in _SAFE_RETRY_METHODS
+                and resp.status_code in _TRANSIENT_READ_STATUS_CODES
+            ):
+                retry_after = _TRANSIENT_READ_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+
+            if retry_after is None or attempt == self.max_retries:
                 return resp
-            retry_after = _DEFAULT_RETRY_AFTER
             if "retry-after" in resp.headers:
                 try:
                     retry_after = float(resp.headers["retry-after"])

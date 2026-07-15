@@ -188,6 +188,44 @@ class TestSendMessage:
         assert captured_headers.get("authorization") == "Bearer client-key"
         client.close()
 
+    def test_send_message_does_not_retry_gateway_failure(self, monkeypatch):
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return _json_response({"detail": "temporary gateway failure"}, 503)
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", lambda _: None)
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        with pytest.raises(AgentRelayError):
+            client.send_message("r1", "hi")
+
+        assert attempts == 1
+        client.close()
+
+    def test_send_message_retries_rate_limit(self, monkeypatch):
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return _json_response({"detail": "rate limited"}, 429)
+            return _json_response(SEND_MESSAGE_RESPONSE)
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", lambda _: None)
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        result = client.send_message("r1", "hi")
+
+        assert result.status == "ok"
+        assert attempts == 2
+        client.close()
+
 
 # ---------------------------------------------------------------------------
 # Tests: get_relay / get_history / health
@@ -265,6 +303,46 @@ class TestReadOperations:
         client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
         result = client.health()
         assert result["status"] == "healthy"
+        client.close()
+
+    def test_get_relay_retries_transient_transport_error(self, monkeypatch):
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise httpx.ConnectError("tunnel reconnecting", request=request)
+            return _json_response(RELAY_STATE_RESPONSE)
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", lambda _: None)
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        state = client.get_relay("test-relay-123")
+
+        assert state.relay_id == "test-relay-123"
+        assert attempts == 2
+        client.close()
+
+    def test_get_relay_retries_transient_gateway_response(self, monkeypatch):
+        attempts = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return _json_response({"detail": "tunnel reconnecting"}, 503)
+            return _json_response(RELAY_STATE_RESPONSE)
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", lambda _: None)
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        state = client.get_relay("test-relay-123")
+
+        assert state.relay_id == "test-relay-123"
+        assert attempts == 2
         client.close()
 
 

@@ -112,6 +112,10 @@ Namespace registration is a legacy unauthenticated discovery mechanism. It remai
 
 Agent Relay ships operational guidance at `skills/agent-relay-coordination/SKILL.md`; the Claude compatibility skill at `.claude/skills/agent-relay/SKILL.md` follows the same authenticated pairing and recovery boundaries.
 
+### Transient read recovery
+
+The Python SDK retries bounded transient transport and gateway failures for read-only `GET` requests, including relay status, history, health, and polling. Turn-advancing writes are not retried after a transport failure; callers should use the message idempotency key when retrying a write intentionally.
+
 ## MCP Server (Claude Code / Cursor)
 
 Use Agent Relay as a tool inside Claude Code, Cursor, or any MCP client:
