@@ -76,7 +76,7 @@ class AgentRelayClient:
 
             if retry_after is None or attempt == self.max_retries:
                 return resp
-            if "retry-after" in resp.headers:
+            if resp.status_code == 429 and "retry-after" in resp.headers:
                 try:
                     retry_after = float(resp.headers["retry-after"])
                 except (ValueError, TypeError):

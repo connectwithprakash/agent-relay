@@ -206,17 +206,39 @@ class TestSendMessage:
         assert attempts == 1
         client.close()
 
-    def test_send_message_retries_rate_limit(self, monkeypatch):
+    def test_send_message_does_not_retry_transport_error(self):
         attempts = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal attempts
             attempts += 1
+            raise httpx.ConnectError("tunnel reconnecting", request=request)
+
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        with pytest.raises(httpx.ConnectError):
+            client.send_message("r1", "hi")
+
+        assert attempts == 1
+        client.close()
+
+    def test_send_message_retries_rate_limit(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
             if attempts == 1:
-                return _json_response({"detail": "rate limited"}, 429)
+                return httpx.Response(
+                    429,
+                    json={"detail": "rate limited"},
+                    headers={"Retry-After": "2.5"},
+                )
             return _json_response(SEND_MESSAGE_RESPONSE)
 
-        monkeypatch.setattr("agent_relay.client.time.sleep", lambda _: None)
+        monkeypatch.setattr("agent_relay.client.time.sleep", delays.append)
         client = AgentRelayClient(base_url="http://test")
         client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
 
@@ -224,6 +246,7 @@ class TestSendMessage:
 
         assert result.status == "ok"
         assert attempts == 2
+        assert delays == [2.5]
         client.close()
 
 
@@ -343,6 +366,57 @@ class TestReadOperations:
 
         assert state.relay_id == "test-relay-123"
         assert attempts == 2
+        client.close()
+
+    def test_get_relay_gateway_retry_ignores_retry_after(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(
+                    503,
+                    json={"detail": "tunnel reconnecting"},
+                    headers={"Retry-After": "3600"},
+                )
+            return _json_response(RELAY_STATE_RESPONSE)
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", delays.append)
+        client = AgentRelayClient(base_url="http://test")
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        state = client.get_relay("test-relay-123")
+
+        assert state.relay_id == "test-relay-123"
+        assert attempts == 2
+        assert delays == [0.5]
+        client.close()
+
+    def test_get_relay_rate_limit_exhaustion(self, monkeypatch):
+        attempts = 0
+        delays = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(
+                429,
+                json={"detail": "rate limited"},
+                headers={"Retry-After": "1.5"},
+            )
+
+        monkeypatch.setattr("agent_relay.client.time.sleep", delays.append)
+        client = AgentRelayClient(base_url="http://test", max_retries=2)
+        client._client = httpx.Client(transport=_mock_transport(handler), base_url="http://test")
+
+        with pytest.raises(AgentRelayError) as exc_info:
+            client.get_relay("test-relay-123")
+
+        assert exc_info.value.status_code == 429
+        assert attempts == 2
+        assert delays == [1.5]
         client.close()
 
 

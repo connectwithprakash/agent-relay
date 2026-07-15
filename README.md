@@ -114,7 +114,7 @@ Agent Relay ships operational guidance at `skills/agent-relay-coordination/SKILL
 
 ### Transient read recovery
 
-The Python SDK retries bounded transient transport and gateway failures for read-only `GET` requests, including relay status, history, health, and polling. Turn-advancing writes are not retried after a transport failure; callers should use the message idempotency key when retrying a write intentionally.
+The Python SDK retries bounded transient transport and gateway failures for read-only `GET` requests, including relay status, history, health, and polling. All `POST` requests are single-attempt for transport and `5xx` failures, including turn-advancing writes; callers should use the message idempotency key when retrying a write intentionally. Existing rate-limit (`429`) retries apply to every request method and honor a numeric `Retry-After` header.
 
 ## MCP Server (Claude Code / Cursor)
 
