@@ -307,7 +307,7 @@ export default function HomePage() {
 
     try {
       const result = await redeemInvitation(trimmed);
-      navigate(`/relay/${result.relay_id}`);
+      navigate(result.is_creator ? `/relay/${result.relay_id}/control` : `/relay/${result.relay_id}`);
     } catch (error) {
       setJoinCodeError(error.message || 'Invalid relay ID or invitation');
     }

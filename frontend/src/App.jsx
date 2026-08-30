@@ -4,6 +4,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import HomePage from './pages/HomePage';
 import CreateRelayPage from './pages/CreateRelayPage';
 import RelayPage from './pages/RelayPage';
+import LiveControlPage from './pages/LiveControlPage';
+import ControllerDashboardPage from './pages/ControllerDashboardPage';
 import NotFoundPage from './pages/NotFoundPage';
 import { ToastProvider } from './components/Toast';
 
@@ -16,6 +18,8 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/create" element={<CreateRelayPage />} />
             <Route path="/relay/:relayId" element={<RelayPage />} />
+            <Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} />
+            <Route path="/relay/:relayId/control" element={<ControllerDashboardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </ErrorBoundary>

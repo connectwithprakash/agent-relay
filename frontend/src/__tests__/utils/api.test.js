@@ -18,7 +18,7 @@ describe('getRelay', () => {
     await expect(getRelay('relay-123')).resolves.toEqual({ relay_id: 'relay-123' });
 
     const [url, options] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe('http://localhost:8000/relays/relay-123');
+    expect(String(url)).toBe(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/relays/relay-123`);
     expect(options).toEqual({ headers: { Authorization: 'Bearer secret-token' } });
   });
 });
