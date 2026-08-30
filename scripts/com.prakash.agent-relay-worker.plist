@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.prakash.agent-relay-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bodhi/Developer/agent-relay/backend/.venv/bin/python</string>
+    <string>-c</string>
+    <string>from agent_relay.cli import main; main()</string>
+    <string>worker-run</string>
+    <string>--name</string>
+    <string>Work Mac Claude service</string>
+    <string>--profile</string>
+    <string>claude-code</string>
+    <string>--claude-workdir</string>
+    <string>/Users/bodhi/Developer/agent-relay</string>
+    <string>--claude-executable</string>
+    <string>/Users/bodhi/.local/bin/claude</string>
+    <string>--config-dir</string>
+    <string>/Users/bodhi/agent-relay-service</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/Users/bodhi/Developer/agent-relay/sdk/src</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/bodhi/agent-relay-service</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/bodhi/Library/Logs/agent-relay-worker.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/bodhi/Library/Logs/agent-relay-worker.err.log</string>
+</dict>
+</plist>
