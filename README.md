@@ -108,6 +108,50 @@ bob.redeem_invitation(invitation["invitation"])
 
 Namespace registration is a legacy unauthenticated discovery mechanism. It remains disabled unless an operator explicitly sets `ALLOW_UNAUTHENTICATED_REGISTRY_ENROLLMENT=true`; it should not be used as an authorization boundary.
 
+## Managed cross-harness control
+
+Agent Relay can also pair a controller with a worker running on another device and expose a fixed, worker-owned harness profile. The worker keeps its credential, executable, and working directory local; a controller can request a session, observe terminal output, and temporarily acquire an exclusive input lease.
+
+### Worker setup
+
+Install the SDK on the worker device, redeem a named worker invitation, then run only an allowlisted local profile. `claude-code` requires an existing absolute working directory and executable path; these values are configured locally and are never accepted from the controller.
+
+```bash
+agent-relay worker-run \
+  --name "Work Mac Claude service" \
+  --profile claude-code \
+  --claude-workdir /absolute/path/to/checkout \
+  --claude-executable /absolute/path/to/claude
+```
+
+The worker writes a mode-`0600` PID file at `~/.agent-relay/worker.pid`, heartbeats the Relay while it is online, and terminates only PTYs it owns when stopped.
+
+### Controller flow
+
+```bash
+# Inspect remembered online workers.
+agent-relay worker-list
+
+# Start the fixed profile on a selected worker.
+agent-relay session-start WORKER_ID claude-code --idempotency-key work-session-1
+
+# After the worker reports ready, claim a bounded input lease.
+agent-relay session-list
+agent-relay session-claim SESSION_ID --version VERSION --lease-seconds 60
+
+# Release when finished.
+agent-relay session-release SESSION_ID
+```
+
+For the browser UI, create a short-lived controller-browser invitation with `agent-relay browser-pairing-invitation`, redeem it once on the home page, then open `/relay/{relay-id}/control`. Select an online worker and open the generated session to reach `/relay/{relay-id}/sessions/{session-id}/live`.
+
+### Safety boundaries
+
+- Workers expose only fixed profiles from their local allowlist; controllers cannot supply arbitrary commands, executable paths, or working directories.
+- Control input requires an active, exclusive, expiring lease. Every input and output is durably recorded for session replay.
+- Workers are marked offline when their heartbeat expires; active leases are released and affected sessions are detached.
+- Browser and stream credentials are sent in authenticated headers or WebSocket subprotocols, never in URLs.
+
 ## Agent Coordination Skill
 
 Agent Relay ships operational guidance at `skills/agent-relay-coordination/SKILL.md`; the Claude compatibility skill at `.claude/skills/agent-relay/SKILL.md` follows the same authenticated pairing and recovery boundaries.
