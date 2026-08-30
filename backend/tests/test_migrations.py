@@ -57,6 +57,22 @@ def test_upgrade_handles_current_tables_created_before_revision_011(tmp_path):
     assert "version" in {column["name"] for column in inspector.get_columns("relays")}
 
 
+def test_revision_014_adds_and_removes_worker_control_schema(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'worker-control.db'}"
+    _upgrade(database_url, "013")
+    _upgrade(database_url, "014")
+
+    inspector = inspect(create_engine(database_url))
+    assert {"workers", "harness_sessions", "control_leases", "control_events"}.issubset(
+        inspector.get_table_names()
+    )
+
+    _downgrade(database_url, "013")
+    assert not {"workers", "harness_sessions", "control_leases", "control_events"}.intersection(
+        inspect(create_engine(database_url)).get_table_names()
+    )
+
+
 def test_revision_011_downgrade_restores_revision_010_schema(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'downgrade-011.db'}"
     _upgrade(database_url, "010")

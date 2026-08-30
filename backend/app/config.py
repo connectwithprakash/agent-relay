@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     allow_legacy_shared_pairing: bool = False
     allow_unauthenticated_registry_enrollment: bool = False
+    worker_stale_seconds: int = Field(default=90, ge=1)
 
     # CORS
     cors_origins: list[str] = ["*"]

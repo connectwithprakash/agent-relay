@@ -179,3 +179,46 @@ class WebhookSchema(BaseModel):
     agent: str
     url: str
     created_at: str
+
+
+# Managed harness control schemas
+class RegisterWorkerRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    profiles: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("profiles")
+    @classmethod
+    def validate_profiles(cls, profiles: list[str]) -> list[str]:
+        if len(profiles) != len(set(profiles)):
+            raise ValueError("Worker profiles must be unique")
+        if any(not _AGENT_NAME_PATTERN.match(profile) for profile in profiles):
+            raise ValueError("Worker profiles may contain only alphanumeric characters, underscores, and hyphens")
+        return profiles
+
+
+class StartSessionRequest(BaseModel):
+    worker_id: str = Field(min_length=1, max_length=100)
+    profile: str = Field(min_length=1, max_length=100)
+    idempotency_key: Optional[str] = Field(default=None, max_length=255)
+
+
+class LeaseRequest(BaseModel):
+    lease_seconds: int = Field(default=60, ge=10, le=300)
+    expected_version: int = Field(ge=0)
+
+
+class InputRequest(BaseModel):
+    input: str = Field(min_length=1, max_length=8192)
+    expected_version: Optional[int] = Field(default=None, ge=0)
+
+
+class EventRequest(BaseModel):
+    kind: Literal["output", "approval_requested", "session_exited", "session_failed"]
+    data: dict = Field(default_factory=dict)
+
+    @field_validator("data")
+    @classmethod
+    def validate_event_data_size(cls, data: dict) -> dict:
+        if len(json.dumps(data).encode("utf-8")) > MAX_DATA_SIZE_BYTES:
+            raise ValueError(f"Serialized data exceeds maximum size of {MAX_DATA_SIZE_BYTES} bytes")
+        return data

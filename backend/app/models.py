@@ -204,13 +204,79 @@ class AgentRegistration(Base):
 
 
 class PairingInvitation(Base):
-    """One-time invitation that can mint a credential only for a named participant."""
+    """One-time pairing material bound to a relay-scoped credential."""
     __tablename__ = "pairing_invitations"
+
     id = Column(String, primary_key=True)
     relay_id = Column(String, ForeignKey("relays.id"), nullable=False, index=True)
     agent_name = Column(String, nullable=False)
+    is_creator = Column(Boolean, default=False, nullable=False)
     secret_hash = Column(String(64), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False)
     redeemed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint('relay_id', 'agent_name', name='uq_pairing_invitation_relay_agent'),)
+
+
+class Worker(Base):
+    """A paired machine-side daemon controlled by its authenticated participant."""
+    __tablename__ = "workers"
+    __table_args__ = (UniqueConstraint("relay_id", "agent_name", name="uq_workers_relay_agent"),)
+
+    id = Column(String, primary_key=True)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=False, index=True)
+    agent_name = Column(String, nullable=False)
+    name = Column(String(100), nullable=False)
+    profiles = Column(JSON, nullable=False, default=list)
+    status = Column(String(16), nullable=False, default="online")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+
+
+class HarnessSession(Base):
+    """A named local process owned by a registered worker."""
+    __tablename__ = "harness_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "relay_id", "controller_agent", "idempotency_key",
+            name="uq_sessions_relay_controller_idempotency",
+        ),
+    )
+
+    id = Column(String, primary_key=True)
+    relay_id = Column(String, ForeignKey("relays.id"), nullable=False, index=True)
+    worker_id = Column(String, ForeignKey("workers.id"), nullable=False, index=True)
+    controller_agent = Column(String, nullable=False)
+    profile = Column(String(100), nullable=False)
+    status = Column(String(16), nullable=False, default="starting")
+    version = Column(Integer, nullable=False, default=0)
+    idempotency_key = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ControlLease(Base):
+    """The current exclusive input lease for one harness session."""
+    __tablename__ = "control_leases"
+
+    session_id = Column(String, ForeignKey("harness_sessions.id"), primary_key=True)
+    controller_agent = Column(String, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    released_at = Column(DateTime, nullable=True)
+
+
+class ControlEvent(Base):
+    """Ordered, replayable control-plane event for a harness session."""
+    __tablename__ = "control_events"
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_control_events_session_sequence"),
+        Index("ix_control_events_session_sequence", "session_id", "sequence"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("harness_sessions.id"), nullable=False)
+    sequence = Column(Integer, nullable=False)
+    kind = Column(String(64), nullable=False)
+    data = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

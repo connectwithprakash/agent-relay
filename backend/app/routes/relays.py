@@ -46,12 +46,40 @@ async def create_pairing_invitation(
         raise HTTPException(status_code=409, detail="Participant already has a credential")
     secret = generate_secret()
     invitation = PairingInvitation(
-        id=str(uuid.uuid4()), relay_id=relay_id, agent_name=agent_name,
-        secret_hash=digest(secret), expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 86400)),
+        id=str(uuid.uuid4()),
+        relay_id=relay_id,
+        agent_name=agent_name,
+        is_creator=False,
+        secret_hash=digest(secret),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 86400)),
     )
     db.query(PairingInvitation).filter(PairingInvitation.relay_id == relay_id, PairingInvitation.agent_name == agent_name).delete()
     db.add(invitation); db.commit()
     return {"invitation": secret, "agent_name": agent_name, "expires_at": invitation.expires_at.isoformat()}
+
+
+@router.post("/relays/{relay_id}/controller-browser-invitations")
+async def create_controller_browser_invitation(
+    relay_id: str,
+    expires_in_seconds: int = 300,
+    agent_info: dict = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """Create a one-time, short-lived browser credential for the relay creator."""
+    if not agent_info["is_creator"]:
+        raise HTTPException(status_code=403, detail="Only the relay creator may issue browser pairing invitations")
+    secret = generate_secret()
+    invitation = PairingInvitation(
+        id=str(uuid.uuid4()),
+        relay_id=relay_id,
+        agent_name=f"controller-browser-{uuid.uuid4().hex}",
+        is_creator=True,
+        secret_hash=digest(secret),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=min(max(expires_in_seconds, 60), 900)),
+    )
+    db.add(invitation)
+    db.commit()
+    return {"invitation": secret, "expires_at": invitation.expires_at.isoformat()}
 
 
 @router.post("/pairing-invitations/{secret}/redeem")
@@ -75,12 +103,23 @@ async def redeem_pairing_invitation(secret: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Invitation is invalid, expired, or already redeemed")
     raw_token = generate_secret()
     try:
-        db.add(AgentToken(token_hash=digest(raw_token), token_prefix=prefix(raw_token), relay_id=invitation.relay_id, agent_name=invitation.agent_name))
+        db.add(AgentToken(
+            token_hash=digest(raw_token),
+            token_prefix=prefix(raw_token),
+            relay_id=invitation.relay_id,
+            agent_name=invitation.agent_name,
+            is_creator=invitation.is_creator,
+        ))
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Participant already has a credential")
-    return {"relay_id": invitation.relay_id, "agent_name": invitation.agent_name, "token": raw_token}
+    return {
+        "relay_id": invitation.relay_id,
+        "agent_name": invitation.agent_name,
+        "is_creator": invitation.is_creator,
+        "token": raw_token,
+    }
 
 
 def get_relay_or_404(db: Session, relay_id: str) -> Relay:
