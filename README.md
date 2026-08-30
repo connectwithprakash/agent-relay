@@ -158,6 +158,32 @@ For the browser UI, create a short-lived controller-browser invitation with `age
 
 After a browser controller is paired, its Home page exposes **Your workers → Manage workers** and the header exposes **Workers** when one controller relay is saved. The Controller dashboard can create and copy one-time codes for another browser or an unpaired work-computer participant. A work-computer code is redeemed by the installed local Worker app; that native component alone owns the approved local Claude executable and worktree.
 
+### Browser-to-worker sequence
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant B as Browser controller
+    participant R as Agent Relay
+    participant W as Local Worker app
+    participant C as Claude Code PTY
+
+    User->>B: Open Workers and create work-computer code
+    B->>R: Create one-time invitation for unpaired participant
+    R-->>B: Short-lived code
+    User->>W: Approve local setup and redeem code
+    W->>R: Redeem code; store local credential
+    W->>R: Register worker and send heartbeats
+    R-->>B: Worker appears online
+    User->>B: Start session and take control
+    B->>R: Request session and exclusive lease
+    R->>W: Deliver session and input events
+    W->>C: Start approved local profile and forward input
+    C-->>W: Terminal output
+    W->>R: Persist output events
+    R-->>B: Replay or stream terminal output
+```
+
 ### Safety boundaries
 
 - Workers expose only fixed profiles from their local allowlist; controllers cannot supply arbitrary commands, executable paths, or working directories.

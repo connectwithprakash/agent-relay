@@ -4,6 +4,27 @@
 
 This verification covers managed fixture and Claude Code PTY profiles. It does not enable unrestricted shell execution.
 
+## Verified control sequence
+
+```mermaid
+sequenceDiagram
+    participant B as Browser controller
+    participant R as Agent Relay
+    participant W as Work-Mac worker
+    participant P as Worker-owned PTY
+
+    B->>R: Open authenticated control stream
+    B->>R: Claim exclusive control lease
+    B->>R: Send terminal input frame
+    R->>R: Validate lease and append input event
+    R-->>W: Deliver input event
+    W->>P: Write input
+    P-->>W: Terminal redraw
+    W->>R: Append output event
+    R-->>B: Replay or stream output
+    B->>R: Release lease
+```
+
 ## Local proof
 
 Start the development Relay with a temporary database:

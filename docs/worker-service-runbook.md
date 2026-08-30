@@ -6,6 +6,31 @@ The worker accepts only the fixed `claude-code` profile, the fixed local workdir
 
 Workers report `online`, `offline`, or `revoked`. The server marks an online worker offline when its persisted `last_seen` exceeds `worker_stale_seconds` (90 seconds by default), releases any lease, and detaches sessions. A successful heartbeat or re-registration recovers that worker to `online`; detached sessions are not resurrected, so request a new session after recovery. A revoked worker cannot recover.
 
+## Runtime sequence
+
+```mermaid
+sequenceDiagram
+    participant L as launchd
+    participant W as Worker daemon
+    participant R as Agent Relay
+    participant C as Controller browser
+    participant H as Claude Code PTY
+
+    L->>W: Start worker at login
+    W->>R: Register and heartbeat
+    R-->>C: Report worker online
+    C->>R: Start approved claude-code session
+    R-->>W: Session request
+    W->>H: Start fixed executable in fixed workdir
+    W->>R: Mark session ready and publish output
+    C->>R: Claim lease and send input
+    R-->>W: Authorized input event
+    W->>H: Write PTY input
+    H-->>W: Output
+    W->>R: Persist output event
+    R-->>C: Stream or replay output
+```
+
 ## One-shot local run
 
 ```bash
