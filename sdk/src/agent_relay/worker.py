@@ -215,6 +215,6 @@ class WorkerDaemon:
                     if frame.get("type") == "event" and frame.get("event", {}).get("kind") == "input_requested":
                         pty_session.write(frame["event"]["data"]["input"])
                     processed += 1
-                output = pty_session.read(timeout=0.0)
+                output = pty_session.read(timeout=0.05 if raw else 0.0)
                 if output:
                     websocket.send(json.dumps({"type": "output", "text": output}))
