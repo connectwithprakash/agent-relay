@@ -1,8 +1,16 @@
 """Agent Relay CLI for creating, joining, and managing relays."""
+import os
+import signal
+import time
+from pathlib import Path
+
 import click
+import httpx
 
 from .client import AgentRelayClient
+from .exceptions import AgentRelayError
 from .config import save_config, load_config, DEFAULT_SERVER
+from .worker import WorkerDaemon
 
 
 @click.group()
@@ -90,6 +98,179 @@ def join_invitation(invitation, server):
         )
         click.echo(f"Joined relay {result['relay_id']} as {result['agent_name']}")
         click.echo(f"Config saved: {config_path}")
+    finally:
+        client.close()
+
+
+def _write_worker_pid(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            existing_pid = int(path.read_text().strip())
+            os.kill(existing_pid, 0)
+        except (ValueError, ProcessLookupError):
+            pass
+        else:
+            raise click.ClickException(f"Worker already running with PID {existing_pid}")
+    path.write_text(f"{os.getpid()}\n")
+    path.chmod(0o600)
+
+
+@main.command("worker-run")
+@click.option("--name", "worker_name", required=True, help="Local display name for this worker")
+@click.option("--profile", "profiles", multiple=True, type=click.Choice(["fixture-shell", "claude-code"]), required=True)
+@click.option("--claude-workdir", type=click.Path(path_type=Path), help="Fixed local directory for the claude-code profile")
+@click.option("--claude-executable", type=click.Path(path_type=Path), help="Absolute local Claude Code executable path")
+@click.option("--poll-seconds", default=0.2, show_default=True, type=click.FloatRange(min=0.05))
+@click.option("--pid-file", default="~/.agent-relay/worker.pid", type=click.Path(path_type=Path), show_default=True)
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def worker_run(worker_name, profiles, claude_workdir, claude_executable, poll_seconds, pid_file, config_dir):
+    """Run one locally configured, gracefully stoppable worker daemon."""
+    if "claude-code" in profiles:
+        if not claude_workdir or not claude_workdir.is_absolute() or not claude_workdir.is_dir():
+            raise click.ClickException("claude-code requires an existing absolute --claude-workdir")
+        if not claude_executable or not claude_executable.is_absolute() or not os.access(claude_executable, os.X_OK):
+            raise click.ClickException("claude-code requires an executable absolute --claude-executable")
+    try:
+        config = load_config(str(config_dir) if config_dir else None)
+    except (FileNotFoundError, KeyError) as error:
+        raise click.ClickException(str(error)) from error
+
+    pid_file = pid_file.expanduser()
+    _write_worker_pid(pid_file)
+    client = AgentRelayClient(config["server"], token=config["token"])
+    daemon = WorkerDaemon(
+        client, config["relay_id"], worker_name, list(profiles),
+        profile_workdirs={"claude-code": str(claude_workdir)} if claude_workdir else {},
+        profile_executables={"claude-code": str(claude_executable)} if claude_executable else {},
+    )
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def stop_worker(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_worker)
+    try:
+        worker_id = daemon.start()
+        click.echo(f"Worker running: {worker_id}. Press Ctrl-C to stop.")
+        while True:
+            try:
+                daemon.run_once()
+            except (AgentRelayError, httpx.HTTPError) as error:
+                click.echo(f"Worker transport error: {error}", err=True)
+            time.sleep(poll_seconds)
+    except KeyboardInterrupt:
+        click.echo("Stopping worker.")
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        daemon.close()
+        client.close()
+        if pid_file.exists() and pid_file.read_text().strip() == str(os.getpid()):
+            pid_file.unlink()
+
+
+def _controller_client(config_dir: Path | None):
+    try:
+        config = load_config(str(config_dir) if config_dir else None)
+    except (FileNotFoundError, KeyError) as error:
+        raise click.ClickException(str(error)) from error
+    return config, AgentRelayClient(config["server"], token=config["token"])
+
+
+@main.command("browser-pairing-invitation")
+@click.option("--expires-in-seconds", default=300, type=click.IntRange(60, 900), show_default=True)
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def browser_pairing_invitation(expires_in_seconds, config_dir):
+    """Create a one-time browser invitation with controller authority."""
+    config, client = _controller_client(config_dir)
+    try:
+        invitation = client.create_controller_browser_invitation(
+            config["relay_id"],
+            expires_in_seconds,
+        )
+        click.echo(invitation["invitation"])
+    finally:
+        client.close()
+
+
+@main.command("worker-list")
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def worker_list(config_dir):
+    """List server-owned worker availability without exposing credentials."""
+    config, client = _controller_client(config_dir)
+    try:
+        for worker in client.list_workers(config["relay_id"]):
+            profiles = ",".join(worker["profiles"])
+            click.echo(f"{worker['worker_id']}  {worker['status']}  {worker['name']}  [{profiles}]")
+    finally:
+        client.close()
+
+
+@main.command("session-list")
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def session_list(config_dir):
+    """List controller-visible managed sessions."""
+    config, client = _controller_client(config_dir)
+    try:
+        for session in client.list_sessions(config["relay_id"]):
+            click.echo(f"{session['session_id']}  {session['status']}  {session['profile']}  v{session['version']}")
+    finally:
+        client.close()
+
+
+@main.command("session-start")
+@click.argument("worker_id")
+@click.argument("profile", type=click.Choice(["fixture-shell", "claude-code"]))
+@click.option("--idempotency-key", help="Stable retry key for this session request")
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def session_start(worker_id, profile, idempotency_key, config_dir):
+    """Request one fixed allowlisted local profile from an online worker."""
+    config, client = _controller_client(config_dir)
+    try:
+        session = client.start_session(config["relay_id"], worker_id, profile, idempotency_key)
+        click.echo(f"Requested {session['session_id']} ({session['status']}, v{session['version']})")
+    finally:
+        client.close()
+
+
+@main.command("session-claim")
+@click.argument("session_id")
+@click.option("--version", type=int, required=True, help="Version reported by session-list")
+@click.option("--lease-seconds", default=60, type=click.IntRange(10, 300), show_default=True)
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def session_claim(session_id, version, lease_seconds, config_dir):
+    """Claim a bounded exclusive controller lease for a ready session."""
+    config, client = _controller_client(config_dir)
+    try:
+        session = client.claim_session(config["relay_id"], session_id, version, lease_seconds)
+        click.echo(f"Control claimed for {session['session_id']} until {session['lease_expires_at']}")
+    finally:
+        client.close()
+
+
+@main.command("session-release")
+@click.argument("session_id")
+@click.option("--version", type=int, help="Version reported by session-list")
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def session_release(session_id, version, config_dir):
+    """Release the caller's controller lease."""
+    config, client = _controller_client(config_dir)
+    try:
+        session = client.release_session(config["relay_id"], session_id, version)
+        click.echo(f"Control released for {session['session_id']} ({session['status']}, v{session['version']})")
+    finally:
+        client.close()
+
+
+@main.command("worker-revoke")
+@click.argument("worker_id")
+@click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
+def worker_revoke(worker_id, config_dir):
+    """Permanently revoke a worker from this relay."""
+    config, client = _controller_client(config_dir)
+    try:
+        worker = client.revoke_worker(config["relay_id"], worker_id)
+        click.echo(f"Revoked {worker['worker_id']} ({worker['name']})")
     finally:
         client.close()
 

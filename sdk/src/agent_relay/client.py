@@ -299,6 +299,20 @@ class AgentRelayClient:
         _raise_for_status(resp)
         return resp.json()
 
+    def create_controller_browser_invitation(
+        self,
+        relay_id: str,
+        expires_in_seconds: int = 300,
+    ) -> dict:
+        """Create a short-lived, one-time browser pairing invitation for the creator."""
+        resp = self._request(
+            "POST",
+            f"/relays/{relay_id}/controller-browser-invitations",
+            params={"expires_in_seconds": expires_in_seconds},
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
     def redeem_invitation(self, invitation: str) -> dict:
         """Redeem a participant-bound invitation and store the issued token."""
         resp = self._request(
@@ -435,6 +449,95 @@ class AgentRelayClient:
             Dict with agent profile including description, capabilities, and status.
         """
         resp = self._request("GET", f"/agents/{namespace}/{agent_name}")
+        _raise_for_status(resp)
+        return resp.json()
+
+    # -- Managed harness control operations --
+
+    def register_worker(self, relay_id: str, name: str, profiles: list[str]) -> dict:
+        """Register this authenticated participant as a worker daemon."""
+        resp = self._request(
+            "POST", f"/relays/{relay_id}/workers",
+            json={"name": name, "profiles": profiles},
+        )
+        _raise_for_status(resp)
+        return resp.json()
+
+    def heartbeat_worker(self, relay_id: str, worker_id: str) -> dict:
+        """Refresh liveness for this authenticated worker."""
+        resp = self._request("POST", f"/relays/{relay_id}/workers/{worker_id}/heartbeat")
+        _raise_for_status(resp)
+        return resp.json()
+
+    def list_worker_sessions(self, relay_id: str, worker_id: str) -> list[dict]:
+        """Read only the sessions assigned to this authenticated worker."""
+        resp = self._request(
+            "GET", f"/relays/{relay_id}/sessions", params={"worker_id": worker_id}
+        )
+        _raise_for_status(resp)
+        return resp.json()["sessions"]
+
+    def list_workers(self, relay_id: str) -> list[dict]:
+        """List workers and their server-owned availability state."""
+        resp = self._request("GET", f"/relays/{relay_id}/workers")
+        _raise_for_status(resp)
+        return resp.json()["workers"]
+
+    def start_session(self, relay_id: str, worker_id: str, profile: str, idempotency_key: str | None = None) -> dict:
+        """Request an allowlisted profile from an available worker."""
+        payload = {"worker_id": worker_id, "profile": profile}
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+        resp = self._request("POST", f"/relays/{relay_id}/sessions", json=payload)
+        _raise_for_status(resp)
+        return resp.json()
+
+    def list_sessions(self, relay_id: str) -> list[dict]:
+        """List controller-visible harness sessions."""
+        resp = self._request("GET", f"/relays/{relay_id}/sessions")
+        _raise_for_status(resp)
+        return resp.json()["sessions"]
+
+    def claim_session(self, relay_id: str, session_id: str, expected_version: int, lease_seconds: int = 60) -> dict:
+        """Acquire the exclusive controller lease for a ready session."""
+        resp = self._request("POST", f"/relays/{relay_id}/sessions/{session_id}/claim", json={"expected_version": expected_version, "lease_seconds": lease_seconds})
+        _raise_for_status(resp)
+        return resp.json()
+
+    def release_session(self, relay_id: str, session_id: str, expected_version: int | None = None) -> dict:
+        """Release the caller's controller lease."""
+        payload = {"expected_version": expected_version} if expected_version is not None else {}
+        resp = self._request("POST", f"/relays/{relay_id}/sessions/{session_id}/release", json=payload)
+        _raise_for_status(resp)
+        return resp.json()
+
+    def revoke_worker(self, relay_id: str, worker_id: str) -> dict:
+        """Revoke a worker so it can no longer control sessions."""
+        resp = self._request("POST", f"/relays/{relay_id}/workers/{worker_id}/revoke")
+        _raise_for_status(resp)
+        return resp.json()
+
+    def mark_session_ready(self, relay_id: str, session_id: str) -> dict:
+        """Mark an owned managed session ready after its PTY starts locally."""
+        resp = self._request("POST", f"/relays/{relay_id}/sessions/{session_id}/ready")
+        _raise_for_status(resp)
+        return resp.json()
+
+    def get_session_events(self, relay_id: str, session_id: str, after_sequence: int = 0) -> list[dict]:
+        """Replay durable session events after a worker-local cursor."""
+        resp = self._request(
+            "GET", f"/relays/{relay_id}/sessions/{session_id}/events",
+            params={"after_sequence": after_sequence},
+        )
+        _raise_for_status(resp)
+        return resp.json()["events"]
+
+    def append_session_event(self, relay_id: str, session_id: str, kind: str, data: dict) -> dict:
+        """Append worker-owned output or state for an assigned session."""
+        resp = self._request(
+            "POST", f"/relays/{relay_id}/sessions/{session_id}/events",
+            json={"kind": kind, "data": data},
+        )
         _raise_for_status(resp)
         return resp.json()
 
