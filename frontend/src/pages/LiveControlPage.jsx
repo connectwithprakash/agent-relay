@@ -65,10 +65,16 @@ export default function LiveControlPage() {
     if (frame.type === 'connected') setLease(Boolean(frame.lease?.held));
     if (frame.type === 'event' && frame.event?.kind === 'output') setTerminal((current) => current + (frame.event.data?.text || ''));
     if (frame.type === 'error') {
+      if (frame.code === 'lease_required') {
+        setLease(false);
+        setError('Control lease ended. Take control again to send input.');
+        void loadSession();
+        return;
+      }
       setError(frame.message);
       if (frame.code === 'worker_unavailable') setSession((current) => current ? { ...current, worker_status: 'offline' } : current);
     }
-  }, []);
+  }, [loadSession]);
 
   const { status, sendInput, reconnect } = useControlStream({
     url: token ? `${wsBase}/relays/${relayId}/sessions/${sessionId}/stream` : '',
