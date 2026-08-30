@@ -156,6 +156,8 @@ agent-relay session-release SESSION_ID
 
 For the browser UI, create a short-lived controller-browser invitation with `agent-relay browser-pairing-invitation`, redeem it once on the home page, then open `/relay/{relay-id}/control`. Select an online worker and open the generated session to reach `/relay/{relay-id}/sessions/{session-id}/live`.
 
+After a browser controller is paired, its Home page exposes **Your workers → Manage workers** and the header exposes **Workers** when one controller relay is saved. The Controller dashboard can create and copy one-time codes for another browser or an unpaired work-computer participant. A work-computer code is redeemed by the installed local Worker app; that native component alone owns the approved local Claude executable and worktree.
+
 ### Safety boundaries
 
 - Workers expose only fixed profiles from their local allowlist; controllers cannot supply arbitrary commands, executable paths, or working directories.
