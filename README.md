@@ -114,7 +114,18 @@ Agent Relay can also pair a controller with a worker running on another device a
 
 ### Worker setup
 
-Install the SDK on the worker device, redeem a named worker invitation, then run only an allowlisted local profile. `claude-code` requires an existing absolute working directory and executable path; these values are configured locally and are never accepted from the controller.
+First create a private relay with the controller and worker as named participants. The creator keeps the controller config; send the one-time invitation printed for the worker participant to the worker device over an authenticated channel.
+
+```bash
+# Controller device: this writes the controller's .agent-relay.json and prints
+# one join-invitation command for the named worker.
+agent-relay create controller work-mac --server https://relay.example
+
+# Worker device: redeem the invitation once. This writes that worker's local config.
+agent-relay join-invitation ONE_TIME_WORKER_INVITATION --server https://relay.example
+```
+
+Then run only an allowlisted local profile. `claude-code` requires an existing absolute working directory and executable path; these values are configured locally and are never accepted from the controller.
 
 ```bash
 agent-relay worker-run \
