@@ -61,7 +61,7 @@ export function useRelayCreation() {
       // Store token for this relay so dashboard can authenticate
       if (result.token && result.relay_id) {
         const { storeToken } = await import('../utils/auth.js');
-        storeToken(result.relay_id, result.token, trimmed[0]);
+        storeToken(result.relay_id, result.token, trimmed[0], true);
       }
       return result;
     } catch (err) {

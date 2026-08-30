@@ -57,11 +57,13 @@ describe('redeemInvitation', () => {
         relay_id: 'relay-123',
         agent_name: 'bob',
         token: 'participant-token',
+        is_creator: true,
       }),
     }));
 
     await redeemInvitation('invite-secret');
 
     expect(localStorage.getItem('relay_token_relay-123')).toBe('participant-token');
+    expect(localStorage.getItem('relay_controller_relay-123')).toBe('true');
   });
 });

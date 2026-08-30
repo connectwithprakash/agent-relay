@@ -4,6 +4,7 @@ import { useRelayList } from '../hooks';
 import RelayCard from '../components/RelayCard';
 import EmptyState from '../components/EmptyState';
 import { redeemInvitation } from '../utils/api';
+import { getControllerRelays } from '../utils/auth';
 
 function HeroSection({ joinId, setJoinId, onJoin, joinCodeError, onCreateClick }) {
   return (
@@ -185,6 +186,30 @@ function QuickActionCards({ onCreateClick, onJoin }) {
   );
 }
 
+function ControllerRelaysSection({ relays, navigate }) {
+  if (relays.length === 0) return null;
+
+  return (
+    <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10">
+      <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-5 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+        <p className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">Your workers</p>
+        <h2 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">Open a saved controller</h2>
+        <div className="mt-4 flex flex-wrap gap-3">
+          {relays.map((relayId) => (
+            <button
+              key={relayId}
+              onClick={() => navigate(`/relay/${relayId}/control`)}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+            >
+              Manage workers
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PublicRelaysSection({ relays, loading, error, navigate }) {
   return (
     <section className="max-w-5xl mx-auto px-4 sm:px-6 py-16">
@@ -292,6 +317,7 @@ export default function HomePage() {
   const [joinCodeError, setJoinCodeError] = useState('');
   const navigate = useNavigate();
   const { relays, loading, error } = useRelayList();
+  const controllerRelays = getControllerRelays();
 
   const handleJoin = async (e) => {
     e.preventDefault();
@@ -324,6 +350,7 @@ export default function HomePage() {
         joinCodeError={joinCodeError}
         onCreateClick={handleCreateClick}
       />
+      <ControllerRelaysSection relays={controllerRelays} navigate={navigate} />
       <HowItWorks />
       <PublicRelaysSection relays={relays} loading={loading} error={error} navigate={navigate} />
       <Footer />

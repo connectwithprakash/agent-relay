@@ -105,7 +105,7 @@ export const redeemInvitation = async (invitation) => {
   );
   const result = await handleResponse(response, 'redeem invitation');
   const { storeToken } = await import('./auth.js');
-  storeToken(result.relay_id, result.token, result.agent_name);
+  storeToken(result.relay_id, result.token, result.agent_name, result.is_creator);
   return result;
 };
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { getControllerRelays } from '../utils/auth';
 
 function DarkModeToggle() {
   const [dark, setDark] = useState(() => {
@@ -75,6 +76,8 @@ function Breadcrumbs() {
 export default function Layout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const controllerRelays = getControllerRelays();
+  const controllerRelay = controllerRelays.length === 1 ? controllerRelays[0] : null;
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -121,6 +124,14 @@ export default function Layout({ children }) {
               >
                 New Relay
               </Link>
+              {controllerRelay && (
+                <Link
+                  to={`/relay/${controllerRelay}/control`}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Workers
+                </Link>
+              )}
               <DarkModeToggle />
             </div>
 
@@ -162,6 +173,14 @@ export default function Layout({ children }) {
               >
                 New Relay
               </Link>
+              {controllerRelay && (
+                <Link
+                  to={`/relay/${controllerRelay}/control`}
+                  className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Workers
+                </Link>
+              )}
             </div>
           </div>
         )}
