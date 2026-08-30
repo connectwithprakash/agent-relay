@@ -58,6 +58,27 @@ async def create_pairing_invitation(
     return {"invitation": secret, "agent_name": agent_name, "expires_at": invitation.expires_at.isoformat()}
 
 
+@router.get("/relays/{relay_id}/unpaired-participants")
+async def list_unpaired_participants(
+    relay_id: str,
+    agent_info: dict = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """List creator roster entries that can still receive a worker invitation."""
+    if not agent_info["is_creator"]:
+        raise HTTPException(status_code=403, detail="Only the relay creator may list unpaired participants")
+    paired_agents = {
+        agent_name for (agent_name,) in db.query(AgentToken.agent_name).filter(
+            AgentToken.relay_id == relay_id,
+        ).all()
+    }
+    participants = [
+        agent_name for agent_name in (agent_info["relay"].agent_names or [])
+        if agent_name not in paired_agents
+    ]
+    return {"participants": participants}
+
+
 @router.post("/relays/{relay_id}/controller-browser-invitations")
 async def create_controller_browser_invitation(
     relay_id: str,

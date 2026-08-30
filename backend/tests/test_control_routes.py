@@ -77,6 +77,30 @@ def test_controller_browser_invitation_is_one_time_and_mints_creator_scope(clien
     assert replay.status_code == 404
 
 
+def test_creator_can_list_only_unpaired_worker_participants(client):
+    relay = _create_control_relay(client)
+
+    unpaired = client.get(
+        f"/relays/{relay['relay_id']}/unpaired-participants",
+        headers=_auth(relay["token"]),
+    )
+    assert unpaired.status_code == 200
+    assert unpaired.json() == {"participants": ["worker"]}
+
+    worker_token = _pair_worker(client, relay)
+    after_pairing = client.get(
+        f"/relays/{relay['relay_id']}/unpaired-participants",
+        headers=_auth(relay["token"]),
+    )
+    assert after_pairing.json() == {"participants": []}
+
+    denied = client.get(
+        f"/relays/{relay['relay_id']}/unpaired-participants",
+        headers=_auth(worker_token),
+    )
+    assert denied.status_code == 403
+
+
 def test_worker_can_register_and_controller_can_start_allowlisted_session(client):
     relay = _create_control_relay(client)
     worker_token = _pair_worker(client, relay)
