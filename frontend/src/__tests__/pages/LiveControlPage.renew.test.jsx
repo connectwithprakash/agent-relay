@@ -1,0 +1,198 @@
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../components/TerminalViewport', () => ({
+  default: () => <div aria-label="Live managed terminal" />,
+}));
+
+import LiveControlPage from '../../pages/LiveControlPage';
+
+const T0 = Date.parse('2026-10-01T00:00:00Z');
+const naiveUtc = (ms) => new Date(ms).toISOString().replace('Z', '');
+const held = (overrides = {}) => ({
+  session_id: 'session-1',
+  profile: 'claude-code',
+  worker_status: 'online',
+  status: 'controlled',
+  controller_agent: 'browser-controller',
+  lease_expires_at: naiveUtc(T0 + 60_000),
+  version: 3,
+  ...overrides,
+});
+const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0); });
+const advance = (ms) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+describe('LiveControlPage lease renewal', () => {
+  const sockets = [];
+  let listed;
+  let renewCalls;
+  let renewHandler;
+
+  const renewedResponse = (version) => () => ({
+    ok: true,
+    json: async () => held({ version, lease_expires_at: naiveUtc(Date.now() + 60_000) }),
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    class FakeWebSocket {
+      static OPEN = 1;
+      readyState = FakeWebSocket.OPEN;
+      constructor(url, protocols) { this.url = url; this.protocols = protocols; sockets.push(this); }
+      close = vi.fn();
+      send = vi.fn();
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    renewCalls = [];
+    renewHandler = renewedResponse(4);
+    listed = held();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url, options) => {
+      if (String(url).endsWith('/lease/renew')) {
+        renewCalls.push({ at: Date.now(), body: JSON.parse(options.body) });
+        const outcome = renewHandler(renewCalls.length);
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      }
+      return { ok: true, json: async () => ({ sessions: [listed] }) };
+    }));
+    localStorage.setItem('relay_token_relay-1', 'browser-token');
+    localStorage.setItem('relay_agent_relay-1', 'browser-controller');
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    sockets.length = 0;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const open = async ({ connected = true } = {}) => {
+    render(
+      <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+        <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    if (connected) { act(() => sockets[0].onopen()); await flush(); }
+  };
+
+  it('renews at about half of the remaining lease with the current version', async () => {
+    await open();
+    await advance(29_000);
+    expect(renewCalls).toHaveLength(0);
+
+    await advance(1_500);
+
+    expect(renewCalls).toHaveLength(1);
+    expect(renewCalls[0].body).toEqual({ lease_seconds: 60, expected_version: 3 });
+    expect(renewCalls[0].at - T0).toBeGreaterThanOrEqual(29_900);
+    expect(renewCalls[0].at - T0).toBeLessThanOrEqual(31_000);
+  });
+
+  it('adopts the returned version, shows the extended lease and renews again with the new version', async () => {
+    renewHandler = (n) => renewedResponse(3 + n)();
+    await open();
+    await advance(31_000);
+    expect(screen.getByText(/^Lease 0:(5\d|60)$|^Lease 1:00$/)).toBeInTheDocument();
+
+    await advance(30_000);
+
+    expect(renewCalls.map((call) => call.body.expected_version)).toEqual([3, 4]);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+  });
+
+  it('keeps control well past one full lease period', async () => {
+    renewHandler = (n) => renewedResponse(3 + n)();
+    await open();
+    for (let elapsed = 0; elapsed < 150_000; elapsed += 10_000) await advance(10_000);
+    expect(renewCalls.length).toBeGreaterThanOrEqual(4);
+    expect(renewCalls.map((call) => call.body.expected_version)).toEqual(renewCalls.map((_, index) => 3 + index));
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('stops after a 409, refetches once, and lets the lease run out without a retry loop', async () => {
+    const error = Object.assign(new Error('Lease cannot be renewed'), { status: 409 });
+    renewHandler = () => ({ ok: false, status: 409, statusText: 'Conflict', json: async () => ({ detail: error.message }) });
+    await open();
+    const listCallsBefore = fetch.mock.calls.filter(([url]) => !String(url).endsWith('/lease/renew')).length;
+
+    await advance(31_000);
+    await advance(120_000);
+
+    expect(renewCalls).toHaveLength(1);
+    const listCallsAfter = fetch.mock.calls.filter(([url]) => !String(url).endsWith('/lease/renew')).length;
+    expect(listCallsAfter - listCallsBefore).toBeLessThanOrEqual(2);
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+  });
+
+  it('stops after a network failure without a retry loop', async () => {
+    renewHandler = () => new TypeError('Failed to fetch');
+    await open();
+
+    await advance(31_000);
+    await advance(120_000);
+
+    expect(renewCalls).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+  });
+
+  it('does not renew from a view-only tab', async () => {
+    listed = held({ controller_agent: 'someone-else', status: 'controlled' });
+    await open();
+    await advance(120_000);
+    expect(renewCalls).toHaveLength(0);
+  });
+
+  it.each(['failed', 'detached'])('does not renew a %s session', async (status) => {
+    listed = held({ status });
+    await open();
+    await advance(120_000);
+    expect(renewCalls).toHaveLength(0);
+  });
+
+  it('does not renew while the stream is not connected', async () => {
+    await open({ connected: false });
+    await advance(45_000);
+    expect(renewCalls).toHaveLength(0);
+  });
+
+  it('does not renew when the worker is not online', async () => {
+    listed = held({ worker_status: 'offline' });
+    await open();
+    await advance(45_000);
+    expect(renewCalls).toHaveLength(0);
+  });
+
+  it('stops renewing on unmount', async () => {
+    await open();
+    cleanup();
+    await advance(120_000);
+    expect(renewCalls).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('refetches the session for a lease_renewed event of its own lease', async () => {
+    await open();
+    const before = fetch.mock.calls.length;
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: { controller_agent: 'browser-controller', expires_at: naiveUtc(T0 + 90_000) } } }) });
+    });
+    await flush();
+    expect(fetch.mock.calls.length).toBe(before + 1);
+  });
+
+  it('ignores a lease_renewed event for another controller', async () => {
+    await open();
+    const before = fetch.mock.calls.length;
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: { controller_agent: 'someone-else', expires_at: naiveUtc(T0 + 90_000) } } }) });
+    });
+    await flush();
+    expect(fetch.mock.calls.length).toBe(before);
+  });
+});

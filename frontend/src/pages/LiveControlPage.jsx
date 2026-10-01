@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getAgent, getToken } from '../utils/auth';
+import { renewLease } from '../utils/api';
 import { parseServerTimestamp } from '../utils/time';
 import { useControlStream } from '../hooks/useControlStream';
 import { useLeaseCountdown } from '../hooks/useLeaseCountdown';
@@ -18,6 +19,7 @@ function hasActiveLease(session, agent) {
   );
 }
 
+const LEASE_SECONDS = 60;
 const SESSION_END_KINDS = new Set(['session_failed', 'session_exited']);
 
 const ERROR_FALLBACKS = {
@@ -103,7 +105,7 @@ function LiveControlSession() {
       setTerminal((current) => current + (frame.event.data?.text || ''));
     }
     if (frame.type === 'event' && frame.event?.kind === 'input_requested') setApprovalPrompt(null);
-    if (frame.type === 'event' && frame.event?.kind === 'lease_renewed') void loadSession();
+    if (frame.type === 'event' && frame.event?.kind === 'lease_renewed' && frame.event.data?.controller_agent === agent) void loadSession();
     if (frame.type === 'event' && frame.event?.kind === 'session_adopted' && sessionRef.current?.status !== 'failed') void loadSession();
     if (frame.type === 'event' && SESSION_END_KINDS.has(frame.event?.kind)) {
       setSession((current) => current ? { ...current, status: 'failed' } : current);
@@ -126,7 +128,7 @@ function LiveControlSession() {
         void loadSession();
       }
     }
-  }, [loadSession, setSession]);
+  }, [agent, loadSession, setSession]);
 
   const holdsLive = lease && !['failed', 'detached'].includes(session?.status);
   const onLeaseExpired = useCallback(() => { setLease(false); void loadSession(); }, [loadSession]);
@@ -138,6 +140,26 @@ function LiveControlSession() {
     onEvent: onFrame,
   });
 
+  const failedRenewalRef = useRef(null);
+  const leaseExpiresAt = session?.lease_expires_at;
+  const canRenew = holdsLive && status === 'connected' && session?.worker_status === 'online';
+  useEffect(() => {
+    const expiresMs = parseServerTimestamp(leaseExpiresAt);
+    if (!canRenew || !Number.isFinite(expiresMs) || failedRenewalRef.current === leaseExpiresAt) return undefined;
+    // Renew once, halfway through the remaining lease. A failure is remembered for this
+    // expiry, so there is no retry loop; the expiry transition then ends control.
+    const timer = setTimeout(async () => {
+      try {
+        const renewed = await renewLease(relayId, sessionId, { expectedVersion: sessionRef.current.version, leaseSeconds: LEASE_SECONDS });
+        setSession((current) => ({ ...renewed, worker_status: current?.worker_status }));
+      } catch (cause) {
+        failedRenewalRef.current = leaseExpiresAt;
+        if (cause.status === 409) void loadSession();
+      }
+    }, Math.max(0, (expiresMs - Date.now()) / 2));
+    return () => clearTimeout(timer);
+  }, [canRenew, leaseExpiresAt, loadSession, relayId, sessionId, setSession]);
+
   const sendTerminalInput = useCallback((data) => {
     if (!lease || status !== 'connected' || session?.worker_status !== 'online') return;
     if (!sendInput(data)) setError('Stream is not connected. Reconnect before sending input.');
@@ -146,7 +168,7 @@ function LiveControlSession() {
 
   const claim = async () => {
     const requestClaim = (version) => request(`/relays/${relayId}/sessions/${sessionId}/claim`, {
-      method: 'POST', body: JSON.stringify({ lease_seconds: 60, expected_version: version }),
+      method: 'POST', body: JSON.stringify({ lease_seconds: LEASE_SECONDS, expected_version: version }),
     });
     const applyClaim = (result) => {
       setSession((current) => ({ ...result, worker_status: current?.worker_status }));

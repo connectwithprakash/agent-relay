@@ -166,7 +166,7 @@ describe('LiveControlPage lease errors', () => {
       await screen.findByText('Lease 0:20');
 
       await act(async () => {
-        sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: {} } }) });
+        sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: { controller_agent: 'browser-controller' } } }) });
       });
 
       expect(await screen.findByText('Lease 1:20')).toBeInTheDocument();
