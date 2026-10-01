@@ -516,3 +516,34 @@ def test_output_written_before_exit_is_kept_when_nobody_reads_until_after_the_ch
         assert "END-OF-OUTPUT" in collected
     finally:
         session.close()
+
+
+def _read_until_text(session, needle, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    collected = ""
+    while needle not in collected and time.monotonic() < deadline:
+        collected += session.read(timeout=0.1)
+    return collected
+
+
+def test_fixture_shell_reports_its_terminal_size_after_a_resize():
+    session = ManagedPtySession.start("fixture-shell")
+    try:
+        session.resize(100, 30)
+        session.write("size\n")
+        assert "size:100x30" in _read_until_text(session, "size:100x30")
+    finally:
+        session.close()
+
+
+def test_fixture_shell_prints_a_detectable_permission_prompt_on_request():
+    session = ManagedPtySession.start("fixture-shell")
+    try:
+        session.write("approval\n")
+        output = _read_until_text(session, "2. No")
+        detector = ApprovalDetector()
+        prompts = detector.feed(output)
+        assert len(prompts) >= 1
+        assert prompts[-1].startswith("Do you want to proceed?")
+    finally:
+        session.close()

@@ -23,10 +23,17 @@ from websockets.sync.client import connect as connect_websocket
 from .exceptions import AgentRelayError
 
 
-_FIXTURE_PROGRAM = """import sys
+_FIXTURE_PROGRAM = """import os, sys
 print('fixture ready', flush=True)
 for line in sys.stdin:
-    print('echo:' + line.rstrip('\\r\\n'), flush=True)
+    text = line.rstrip('\\r\\n')
+    if text == 'size':
+        columns, rows = os.get_terminal_size(sys.stdout.fileno())
+        print(f'size:{columns}x{rows}', flush=True)
+    elif text == 'approval':
+        print('Do you want to proceed?\\n  > 1. Yes\\n    2. No', flush=True)
+    else:
+        print('echo:' + text, flush=True)
 """
 
 MIN_COLS, MAX_COLS = 20, 500
