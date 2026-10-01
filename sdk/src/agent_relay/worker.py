@@ -41,6 +41,9 @@ _EXIT_DRAIN_SECONDS = 0.2
 _ADOPTION_RETRY_START_SECONDS = 1.0
 _ADOPTION_RETRY_MAX_SECONDS = 30.0
 _RECONNECT_START_SECONDS = 1.0
+_OUTPUT_EVENT_CHARS = 4096  # at most 16 KB of UTF-8 per output event, far below the 64 KB backend cap
+_UNSENT_OUTPUT_CAP_CHARS = 256 * 1024
+_UNSENT_PROMPTS_CAP = 16
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -206,9 +209,17 @@ class ManagedPtySession:
                 self.process.wait(timeout=2)
 
 
+def _is_retryable(error: Exception) -> bool:
+    """True for failures that can succeed on a later attempt: transport, 408, 429, 5xx."""
+    if isinstance(error, httpx.HTTPError):
+        return True
+    status = getattr(error, "status_code", None)
+    return status is None or status >= 500 or status in (408, 429)
+
+
 @dataclass
-class _PendingAdoption:
-    """Retry state for one session_adopted report that the backend has not accepted."""
+class _RetryState:
+    """Backoff state for one retried backend call, keyed by session."""
 
     next_attempt: float = 0.0
     delay: float = _ADOPTION_RETRY_START_SECONDS
@@ -233,11 +244,13 @@ class WorkerDaemon:
         self._sessions: dict[str, ManagedPtySession | ManagedTmuxSession] = {}
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
-        self._adoption_pending: dict[str, _PendingAdoption] = {}
+        self._adoption_pending: dict[str, _RetryState] = {}
         self._session_errors: dict[str, str] = {}
         self._ready_pending: set[str] = set()
         self._unsent_output: dict[str, str] = {}
         self._unsent_prompts: dict[str, list[str]] = {}
+        self._session_backoff: dict[str, _RetryState] = {}
+        self._notices: set[tuple[str, str]] = set()
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -264,7 +277,7 @@ class WorkerDaemon:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
             if session["status"] == "detached":
-                self._adoption_pending[session_id] = _PendingAdoption()
+                self._adoption_pending[session_id] = _RetryState()
         return adopted
 
     def _report_pending_adoption(self, session_id: str) -> None:
@@ -290,30 +303,60 @@ class WorkerDaemon:
                 return
         del self._adoption_pending[session_id]
 
-    def _relay_output(self, session_id: str, output: str) -> None:
-        """Append terminal output as an event and report any permission prompts it completes.
+    def _notice_once(self, session_id: str, kind: str, message: str) -> None:
+        """Log a data-loss notice once per outage; a fully delivered relay re-arms it."""
+        if (session_id, kind) not in self._notices:
+            self._notices.add((session_id, kind))
+            print(f"Session {session_id}: {message}", file=sys.stderr)
 
-        Output or prompts the backend did not accept are kept and sent first on the next call.
+    def _relay_output(self, session_id: str, output: str) -> None:
+        """Append terminal output as events and report any permission prompts it completes.
+
+        Output is sent in events well under the backend size limit. Output or prompts that
+        fail for a reason that can pass later (transport, 408, 429, 5xx) are kept, bounded,
+        and sent first on the next call; anything the backend rejects for good is dropped.
         """
         prompts = self._unsent_prompts.pop(session_id, [])
-        output = self._unsent_output.pop(session_id, "") + output
-        if output:
+        text = self._unsent_output.pop(session_id, "") + output
+        pieces = [text[start:start + _OUTPUT_EVENT_CHARS] for start in range(0, len(text), _OUTPUT_EVENT_CHARS)]
+        detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
+        dropped = False
+        for index, piece in enumerate(pieces):
             try:
-                self.client.append_session_event(self.relay_id, session_id, "output", {"text": output})
-            except (AgentRelayError, httpx.HTTPError):
-                self._unsent_output[session_id] = output
-                self._unsent_prompts[session_id] = prompts
-                raise
-            detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
-            prompts = prompts + detector.feed(output)
+                self.client.append_session_event(self.relay_id, session_id, "output", {"text": piece})
+            except (AgentRelayError, httpx.HTTPError) as error:
+                if _is_retryable(error):
+                    self._retain(session_id, "".join(pieces[index:]), prompts)
+                    raise
+                dropped = True
+                self._notice_once(session_id, "drop", f"output dropped, the backend rejected it: {error}")
+            prompts = prompts + detector.feed(piece)
         for index, prompt in enumerate(prompts):
             try:
                 self.client.append_session_event(
                     self.relay_id, session_id, "approval_requested", {"prompt": prompt}
                 )
-            except (AgentRelayError, httpx.HTTPError):
-                self._unsent_prompts[session_id] = prompts[index:]
-                raise
+            except (AgentRelayError, httpx.HTTPError) as error:
+                if _is_retryable(error):
+                    self._retain(session_id, "", prompts[index:])
+                    raise
+                dropped = True
+                self._notice_once(session_id, "drop", f"approval prompt dropped, the backend rejected it: {error}")
+        if not dropped:
+            self._notices = {notice for notice in self._notices if notice[0] != session_id}
+
+    def _retain(self, session_id: str, text: str, prompts: list[str]) -> None:
+        """Keep undelivered output and prompts for the next pass, dropping the oldest past the caps."""
+        if len(text) > _UNSENT_OUTPUT_CAP_CHARS:
+            text = text[-_UNSENT_OUTPUT_CAP_CHARS:]
+            self._notice_once(session_id, "overflow-output", "backend outage, dropping the oldest unsent output")
+        if len(prompts) > _UNSENT_PROMPTS_CAP:
+            prompts = prompts[-_UNSENT_PROMPTS_CAP:]
+            self._notice_once(session_id, "overflow-prompts", "backend outage, dropping the oldest unsent approval prompts")
+        if text:
+            self._unsent_output[session_id] = text
+        if prompts:
+            self._unsent_prompts[session_id] = prompts
 
     def _record_cursor(self, session_id: str, pty_session, sequence: int) -> None:
         """Advance the event cursor, persisting it first so a crash cannot replay input."""
@@ -346,14 +389,27 @@ class WorkerDaemon:
         heartbeat = getattr(self.client, "heartbeat_worker", None)
         if heartbeat:
             heartbeat(self.relay_id, self.worker_id)
-        for session in self.client.list_worker_sessions(self.relay_id, self.worker_id):
+        listed = self.client.list_worker_sessions(self.relay_id, self.worker_id)
+        for session in listed:
             session_id = session["session_id"]
+            backoff = self._session_backoff.get(session_id)
+            if backoff is not None and self.clock() < backoff.next_attempt:
+                continue
             try:
                 self._process_session(session)
             except (AgentRelayError, httpx.HTTPError) as error:
                 self._log_session_error(session_id, error)
+                if not _is_retryable(error):
+                    backoff = self._session_backoff.setdefault(session_id, _RetryState())
+                    backoff.next_attempt = self.clock() + backoff.delay
+                    backoff.delay = min(backoff.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
             else:
                 self._session_errors.pop(session_id, None)
+                self._session_backoff.pop(session_id, None)
+        listed_ids = {session["session_id"] for session in listed}
+        for tracked in (self._session_errors, self._session_backoff):
+            for gone in [key for key in tracked if key not in listed_ids]:
+                del tracked[gone]
 
     def _log_session_error(self, session_id: str, error: Exception) -> None:
         """Log a session's backend failure once per distinct error; the pass moves on."""
@@ -423,9 +479,14 @@ class WorkerDaemon:
         self._ready_pending.clear()
         self._unsent_output.clear()
         self._unsent_prompts.clear()
+        self._session_backoff.clear()
+        self._notices.clear()
 
     def run_stream_with_reconnect(self, session_id: str, *, max_attempts: int = 5, sleep=time.sleep, **stream_options) -> None:
-        """Run the live stream, reconnecting with doubling backoff up to max_attempts connections."""
+        """Run the live stream, reconnecting with doubling backoff up to max_attempts connections.
+
+        worker-run does not call this yet; it uses the polling path in run_once.
+        """
         delay = _RECONNECT_START_SECONDS
         for attempt in range(1, max_attempts + 1):
             try:
