@@ -37,6 +37,7 @@ _SEND_KEYS_CHUNK_BYTES = 256
 _READ_CHUNK_BYTES = 65536
 _MAX_READ_BYTES = 1024 * 1024
 _ROTATION_GRACE_SECONDS = 0.3
+_EXIT_DRAIN_SECONDS = 0.2
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -116,6 +117,7 @@ class ManagedPtySession:
     process: subprocess.Popen[bytes]
     master_fd: int
     profile: str
+    slave_fd: int = -1
 
     @classmethod
     def start(cls, profile: str, workdir: str | None = None, executable: str | None = None) -> "ManagedPtySession":
@@ -143,9 +145,13 @@ class ManagedPtySession:
                 cwd=workdir,
                 preexec_fn=attach_controlling_terminal,
             )
-        finally:
+        except BaseException:
             os.close(slave_fd)
-        return cls(process=process, master_fd=master_fd, profile=profile)
+            os.close(master_fd)
+            raise
+        # The slave end stays open here: on macOS the kernel discards unread output when
+        # the last slave descriptor closes, so an exiting child would lose its final lines.
+        return cls(process=process, master_fd=master_fd, profile=profile, slave_fd=slave_fd)
 
     def write(self, data: str) -> None:
         """Write terminal input only while this worker-owned process is running."""
@@ -195,6 +201,12 @@ class ManagedPtySession:
             except OSError:
                 pass
             self.master_fd = -1
+        if self.slave_fd >= 0:
+            try:
+                os.close(self.slave_fd)
+            except OSError:
+                pass
+            self.slave_fd = -1
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -510,6 +522,17 @@ class WorkerDaemon:
             self._cursors[session_id] = adopted.load_cursor()
         return adopted
 
+    def _relay_output(self, session_id: str, output: str) -> None:
+        """Append terminal output as an event and report any permission prompts it completes."""
+        if not output:
+            return
+        self.client.append_session_event(self.relay_id, session_id, "output", {"text": output})
+        detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
+        for prompt in detector.feed(output):
+            self.client.append_session_event(
+                self.relay_id, session_id, "approval_requested", {"prompt": prompt}
+            )
+
     def _record_cursor(self, session_id: str, pty_session, sequence: int) -> None:
         """Advance the event cursor, persisting it first so a crash cannot replay input."""
         if sequence <= self._cursors.get(session_id, 0):
@@ -561,6 +584,7 @@ class WorkerDaemon:
                 continue
             exit_code = pty_session.poll()
             if exit_code is not None:
+                self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
                 self.client.append_session_event(
                     self.relay_id,
                     session_id,
@@ -581,16 +605,7 @@ class WorkerDaemon:
                 elif event["kind"] == "resize_requested":
                     self._apply_resize(pty_session, event["data"])
 
-            output = pty_session.read(timeout=0.05 if events else 0.0)
-            if output:
-                self.client.append_session_event(
-                    self.relay_id, session_id, "output", {"text": output}
-                )
-                detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
-                for prompt in detector.feed(output):
-                    self.client.append_session_event(
-                        self.relay_id, session_id, "approval_requested", {"prompt": prompt}
-                    )
+            self._relay_output(session_id, pty_session.read(timeout=0.05 if events else 0.0))
 
     def close(self) -> None:
         """Stop owned PTYs; tmux sessions are detached and left running for re-attach."""

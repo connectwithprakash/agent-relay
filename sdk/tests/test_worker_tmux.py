@@ -305,7 +305,7 @@ def test_daemon_reports_exit_and_cleans_up_when_the_command_ends(tmp_path, socke
     daemon = WorkerDaemon(
         client, "relay-1", "Mac", ["claude-code-tmux"],
         profile_workdirs={"claude-code-tmux": str(tmp_path)},
-        profile_executables={"claude-code-tmux": _script(tmp_path, "#!/bin/sh\nexit 5\n")},
+        profile_executables={"claude-code-tmux": _script(tmp_path, "#!/bin/sh\necho final words\nexit 5\n")},
         state_dir=state_dir, tmux_socket=socket_name,
     )
     daemon.start()
@@ -315,6 +315,9 @@ def test_daemon_reports_exit_and_cleans_up_when_the_command_ends(tmp_path, socke
             daemon.run_once()
             time.sleep(0.05)
         assert ("session_exited", {"exit_code": 5}) in client.appended
+        kinds = [kind for kind, _ in client.appended]
+        assert kinds[-1] == "session_exited"
+        assert "final words" in "".join(d["text"] for k, d in client.appended if k == "output")
         assert ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir) is None
         assert [p for p in state_dir.iterdir() if p.name.startswith("arelay-s1")] == []
     finally:
