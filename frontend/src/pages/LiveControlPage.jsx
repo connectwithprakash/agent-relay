@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getAgent, getToken } from '../utils/auth';
+import { parseServerTimestamp } from '../utils/time';
 import { useControlStream } from '../hooks/useControlStream';
 import TerminalViewport from '../components/TerminalViewport';
 
@@ -12,7 +13,7 @@ function hasActiveLease(session, agent) {
     agent
       && session?.controller_agent === agent
       && session.lease_expires_at
-      && Date.parse(session.lease_expires_at) > Date.now(),
+      && parseServerTimestamp(session.lease_expires_at) > Date.now(),
   );
 }
 
