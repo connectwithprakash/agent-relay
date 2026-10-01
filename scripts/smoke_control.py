@@ -134,6 +134,7 @@ def main() -> int:
     backend = None
     daemon = None
     stream = None
+    worker_thread = None
     try:
         workdir = Path(tempfile.mkdtemp(prefix="agent-relay-smoke-"))
         port = free_port()
@@ -227,6 +228,8 @@ def main() -> int:
                 pass
         if daemon is not None:
             daemon.close()
+        if worker_thread is not None:
+            worker_thread.join(timeout=5)  # let the worker stream end before the backend goes away
         if backend is not None:
             backend.terminate()
             try:
