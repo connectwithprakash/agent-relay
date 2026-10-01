@@ -458,15 +458,52 @@ def test_adoption_tolerates_a_409_from_the_backend(tmp_path, socket_name, state_
         ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
 
 
-def test_other_adoption_errors_are_not_swallowed(tmp_path, socket_name, state_dir):
+def test_failed_adoption_report_is_retried_once_per_pass_until_it_succeeds(tmp_path, socket_name, state_dir):
     from agent_relay.exceptions import AgentRelayError
 
-    client, daemon = _restart_with_status(
-        tmp_path, socket_name, state_dir, "detached", append_error=AgentRelayError("boom", status_code=500)
-    )
+    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
+    calls = []
+    original = client.append_session_event
+
+    def flaky(relay_id, session_id, kind, data):
+        if kind == "session_adopted":
+            calls.append(kind)
+            if len(calls) == 1:
+                raise AgentRelayError("boom", status_code=500)
+        return original(relay_id, session_id, kind, data)
+
+    client.append_session_event = flaky
     try:
-        with pytest.raises(AgentRelayError):
+        daemon.run_once()
+        assert len(calls) == 1  # first report failed, session is still managed
+        assert "s1" in daemon._sessions
+        daemon.run_once()
+        assert len(calls) == 2  # retried exactly once in this pass and succeeded
+        daemon.run_once()
+        assert len(calls) == 2  # silent afterwards
+    finally:
+        daemon.close()
+        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
+
+
+def test_a_409_on_retry_clears_the_pending_report(tmp_path, socket_name, state_dir):
+    from agent_relay.exceptions import AgentRelayError
+
+    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
+    calls = []
+    original = client.append_session_event
+
+    def failing(relay_id, session_id, kind, data):
+        if kind == "session_adopted":
+            calls.append(kind)
+            raise AgentRelayError("boom" if len(calls) == 1 else "conflict", status_code=500 if len(calls) == 1 else 409)
+        return original(relay_id, session_id, kind, data)
+
+    client.append_session_event = failing
+    try:
+        for _ in range(4):
             daemon.run_once()
+        assert len(calls) == 2
     finally:
         daemon.close()
         ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()

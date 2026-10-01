@@ -6,6 +6,10 @@ fixture-shell profile, and drives a controller over the real WebSocket: claim a 
 send input, check output, resize and check the PTY size, then check an approval round
 trip. Exits non-zero on the first failure.
 
+fixture-shell is a test-only profile; it is not meant for real deployments. The backend
+runs from a temporary working directory with a minimal environment, so neither
+backend/.env nor the caller's settings leak into the run.
+
 Run it with an interpreter that has the backend and SDK dependencies installed:
 
     backend/.venv/bin/python scripts/smoke_control.py
@@ -51,8 +55,9 @@ def start_backend(workdir: Path, port: int) -> subprocess.Popen:
     }
     log = open(workdir / "backend.log", "wb")
     return subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=ROOT / "backend", env=env, stdout=log, stderr=subprocess.STDOUT,
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--app-dir", str(ROOT / "backend"),
+         "--host", "127.0.0.1", "--port", str(port)],
+        cwd=workdir, env=env, stdout=log, stderr=subprocess.STDOUT,
     )
 
 
@@ -125,14 +130,16 @@ class ControllerStream:
 
 
 def main() -> int:
-    workdir = Path(tempfile.mkdtemp(prefix="agent-relay-smoke-"))
-    port = free_port()
-    base_url = f"http://127.0.0.1:{port}"
-    ws_base = f"ws://127.0.0.1:{port}"
-    backend = start_backend(workdir, port)
+    workdir = None
+    backend = None
     daemon = None
     stream = None
     try:
+        workdir = Path(tempfile.mkdtemp(prefix="agent-relay-smoke-"))
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        ws_base = f"ws://127.0.0.1:{port}"
+        backend = start_backend(workdir, port)
         wait_for_backend(base_url, backend)
         print(f"backend ready on {base_url}")
         controller = AgentRelayClient(base_url)
@@ -220,12 +227,14 @@ def main() -> int:
                 pass
         if daemon is not None:
             daemon.close()
-        backend.terminate()
-        try:
-            backend.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            backend.kill()
-        shutil.rmtree(workdir, ignore_errors=True)
+        if backend is not None:
+            backend.terminate()
+            try:
+                backend.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                backend.kill()
+        if workdir is not None:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -517,6 +517,7 @@ class WorkerDaemon:
         self._sessions: dict[str, ManagedPtySession | ManagedTmuxSession] = {}
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
+        self._adoption_pending: set[str] = set()
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -543,16 +544,24 @@ class WorkerDaemon:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
             if session["status"] == "detached":
-                self._report_adoption(session_id)
+                self._adoption_pending.add(session_id)
         return adopted
 
-    def _report_adoption(self, session_id: str) -> None:
-        """Tell the backend a detached session is back; a 409 means it already moved on."""
+    def _report_pending_adoption(self, session_id: str) -> None:
+        """Tell the backend a detached session is back, once per pass until it is accepted.
+
+        A 409 means the session already moved on, so the report is dropped. Any other
+        failure keeps it pending for the next pass instead of aborting the others.
+        """
+        if session_id not in self._adoption_pending:
+            return
         try:
             self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
         except AgentRelayError as error:
             if error.status_code != 409:
-                raise
+                print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
+                return
+        self._adoption_pending.discard(session_id)
 
     def _relay_output(self, session_id: str, output: str) -> None:
         """Append terminal output as an event and report any permission prompts it completes."""
@@ -614,6 +623,7 @@ class WorkerDaemon:
             pty_session = self._sessions.get(session_id)
             if not pty_session:
                 continue
+            self._report_pending_adoption(session_id)
             exit_code = pty_session.poll()
             if exit_code is not None:
                 self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
@@ -626,6 +636,7 @@ class WorkerDaemon:
                 pty_session.close()
                 del self._sessions[session_id]
                 self._approval_detectors.pop(session_id, None)
+                self._adoption_pending.discard(session_id)
                 continue
             events = self.client.get_session_events(
                 self.relay_id, session_id, self._cursors.get(session_id, 0)
