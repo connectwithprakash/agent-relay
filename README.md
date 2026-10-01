@@ -172,7 +172,7 @@ Detection is best effort. It matches the "Do you want to ... 1. Yes ... No" dial
 
 ### Session adoption
 
-A `claude-code-tmux` session can outlive its worker process (see Worker setup for the profile). The server moves a `detached` session back to `ready` with a new version only when the session's own worker, while `online`, posts a `session_adopted` event with no data; any other state returns 409 and changes nothing. A failed session is never adopted and leases are not restored, so a controller claims a new lease. The live page refreshes the session when it sees `session_adopted`, so the badge returns to ready without a reload.
+A `claude-code-tmux` session can outlive its worker process (see Worker setup for the profile). The server moves a `detached` session back to `ready` with a new version only when the session's own worker, while `online`, posts a `session_adopted` event with no data; a stale or offline worker, or a session in any other state, gets 409 and nothing changes, and callers other than the session's own worker get 403. A failed session is never adopted and leases are not restored, so a controller claims a new lease. The live page refreshes the session when it sees `session_adopted`, so the badge returns to ready without a reload.
 
 Automatic adoption reporting by the worker ships with the separate worker-adopt PR and is not on main yet. Until it merges, a restarted worker does not post `session_adopted` by itself.
 
