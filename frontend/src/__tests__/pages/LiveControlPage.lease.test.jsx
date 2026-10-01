@@ -149,6 +149,30 @@ describe('LiveControlPage lease errors', () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
+    it('picks up a renewed lease from a live lease_renewed event by refetching the session', async () => {
+      const responses = [
+        { ...session, status: 'controlled', lease_expires_at: naiveUtc(20_000), version: 3 },
+        { ...session, status: 'controlled', lease_expires_at: naiveUtc(80_000), version: 4 },
+      ];
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ sessions: [responses.length > 1 ? responses.shift() : responses[0]] }),
+      })));
+      render(
+        <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+          <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+        </MemoryRouter>,
+      );
+      await screen.findByText('Lease 0:20');
+
+      await act(async () => {
+        sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: {} } }) });
+      });
+
+      expect(await screen.findByText('Lease 1:20')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+    });
+
     it('shows no countdown and runs no timer for a view-only tab', async () => {
       mount({ status: 'ready', controller_agent: 'someone-else', lease_expires_at: naiveUtc(90_000) });
       await screen.findByText('worker online');

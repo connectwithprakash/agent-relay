@@ -103,6 +103,7 @@ function LiveControlSession() {
       setTerminal((current) => current + (frame.event.data?.text || ''));
     }
     if (frame.type === 'event' && frame.event?.kind === 'input_requested') setApprovalPrompt(null);
+    if (frame.type === 'event' && frame.event?.kind === 'lease_renewed') void loadSession();
     if (frame.type === 'event' && frame.event?.kind === 'session_adopted' && sessionRef.current?.status !== 'failed') void loadSession();
     if (frame.type === 'event' && SESSION_END_KINDS.has(frame.event?.kind)) {
       setSession((current) => current ? { ...current, status: 'failed' } : current);
