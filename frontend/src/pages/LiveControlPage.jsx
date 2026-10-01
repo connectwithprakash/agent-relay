@@ -97,6 +97,7 @@ function LiveControlSession() {
     if (frame.type === 'event' && SESSION_END_KINDS.has(frame.event?.kind)) {
       setSession((current) => current ? { ...current, status: 'failed' } : current);
       setLease(false);
+      void loadSession();
     }
     if (frame.type === 'event' && frame.event?.kind === 'approval_requested' && typeof frame.event.data?.prompt === 'string' && frame.event.data.prompt) {
       setApprovalPrompt(frame.event.data.prompt);

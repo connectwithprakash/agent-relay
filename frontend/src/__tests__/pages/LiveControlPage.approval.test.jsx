@@ -279,20 +279,23 @@ describe('LiveControlPage session adoption', () => {
     expect(screen.queryByText('session detached')).toBeNull();
   });
 
-  it.each(['session_failed', 'session_exited'])('marks the session failed on %s without a refetch', async (kind) => {
-    respondWith({ ...detached, status: 'ready' });
+  it.each(['session_failed', 'session_exited'])('marks the session failed on %s and refreshes the worker badge from the server', async (kind) => {
+    const ready = { ...detached, status: 'ready', worker_status: 'offline', version: 4 };
+    const failedOnline = { ...ready, status: 'failed', worker_status: 'online', version: 5 };
+    respondWith(ready, failedOnline);
     await open();
     await screen.findByText('session ready');
-    fetch.mockClear();
+    expect(screen.getByText('worker offline')).toBeInTheDocument();
 
     act(() => sockets[0].onmessage(frame(kind, 4, {})));
 
     expect(screen.getByText('session failed')).toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(await screen.findByText('worker online')).toBeInTheDocument();
+    expect(screen.getByText('session failed')).toBeInTheDocument();
   });
 
   it('does not refetch on session_adopted right after the session failed', async () => {
-    respondWith({ ...detached, status: 'ready' });
+    respondWith({ ...detached, status: 'ready' }, { ...detached, status: 'failed', version: 5 });
     await open();
     await screen.findByText('session ready');
     act(() => sockets[0].onmessage(frame('session_failed', 4, {})));
