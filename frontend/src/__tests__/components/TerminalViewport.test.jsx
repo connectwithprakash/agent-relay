@@ -126,6 +126,11 @@ describe('TerminalViewport', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Allow <b>rm -rf</b>?');
     });
 
+    it('caps the banner height so a long prompt cannot push the terminal away', () => {
+      render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt={'x'.repeat(4096)} />);
+      expect(screen.getByRole('alert')).toHaveClass('max-h-40', 'overflow-auto');
+    });
+
     it('calls onDismissApproval when dismissed', () => {
       const onDismissApproval = vi.fn();
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt="Proceed?" onDismissApproval={onDismissApproval} />);

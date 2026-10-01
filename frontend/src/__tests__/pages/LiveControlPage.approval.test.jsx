@@ -3,11 +3,12 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../components/TerminalViewport', () => ({
-  default: ({ approvalPrompt, onDismissApproval, onResize }) => (
+  default: ({ approvalPrompt, onDismissApproval, onResize, onInput }) => (
     <div aria-label="Live managed terminal">
       {approvalPrompt && <p data-testid="approval">{approvalPrompt}</p>}
       <button onClick={onDismissApproval}>mock dismiss</button>
       <button onClick={() => onResize(120, 40)}>mock resize</button>
+      <button onClick={() => onInput('1')}>mock type</button>
     </div>
   ),
 }));
@@ -58,12 +59,57 @@ describe('LiveControlPage approval and resize', () => {
     act(() => sockets[0].onopen());
   };
 
-  it('passes the approval prompt to the terminal and clears it on the next output', async () => {
+  it('passes the approval prompt to the terminal', async () => {
     await open();
     act(() => sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' })));
     expect(screen.getByTestId('approval')).toHaveTextContent('Allow edit?');
+  });
 
-    act(() => sockets[0].onmessage(frame('output', 2, { text: '1\n' })));
+  it('keeps the approval through spinner-style output redraws', async () => {
+    await open();
+    act(() => sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' })));
+    act(() => sockets[0].onmessage(frame('output', 2, { text: '\r|' })));
+    act(() => sockets[0].onmessage(frame('output', 3, { text: '\r/' })));
+    expect(screen.getByTestId('approval')).toHaveTextContent('Allow edit?');
+  });
+
+  it('clears the approval when a later input_requested event arrives', async () => {
+    await open();
+    act(() => sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' })));
+    act(() => sockets[0].onmessage(frame('input_requested', 2, { input: '1\n' })));
+    expect(screen.queryByTestId('approval')).toBeNull();
+  });
+
+  it('does not show a stale approval when replay ends with input_requested', async () => {
+    await open();
+    act(() => {
+      sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' }));
+      sockets[0].onmessage(frame('output', 2, { text: 'x' }));
+      sockets[0].onmessage(frame('input_requested', 3, { input: '1\n' }));
+    });
+    expect(screen.queryByTestId('approval')).toBeNull();
+  });
+
+  it('keeps an approval that arrives after an earlier input_requested', async () => {
+    await open();
+    act(() => sockets[0].onmessage(frame('input_requested', 1, { input: 'a' })));
+    act(() => sockets[0].onmessage(frame('approval_requested', 2, { prompt: 'Allow edit?' })));
+    expect(screen.getByTestId('approval')).toHaveTextContent('Allow edit?');
+  });
+
+  it('clears the approval when the user types into the terminal', async () => {
+    await open();
+    act(() => sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' })));
+    fireEvent.click(screen.getByText('mock type'));
+    expect(sockets[0].send).toHaveBeenCalledWith(JSON.stringify({ type: 'input', input: '1' }));
+    expect(screen.queryByTestId('approval')).toBeNull();
+  });
+
+  it('clears the approval when the user sends the input form', async () => {
+    await open();
+    act(() => sockets[0].onmessage(frame('approval_requested', 1, { prompt: 'Allow edit?' })));
+    fireEvent.change(screen.getByLabelText('Terminal input'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(screen.queryByTestId('approval')).toBeNull();
   });
 
@@ -96,7 +142,7 @@ describe('LiveControlPage approval and resize', () => {
   it('surfaces an invalid_resize error without a message and keeps the terminal and lease', async () => {
     await open();
     act(() => sockets[0].onmessage({ data: JSON.stringify({ type: 'error', code: 'invalid_resize' }) }));
-    expect(screen.getByRole('alert')).toHaveTextContent(/resize/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/terminal size/i);
     expect(screen.getByLabelText('Live managed terminal')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
   });

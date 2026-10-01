@@ -17,7 +17,7 @@ function hasActiveLease(session, agent) {
 }
 
 const ERROR_FALLBACKS = {
-  invalid_resize: 'The relay rejected the terminal resize.',
+  invalid_resize: 'The terminal size was rejected by the relay.',
   worker_unavailable: 'The worker is unavailable.',
 };
 
@@ -71,8 +71,8 @@ export default function LiveControlPage() {
     if (frame.type === 'connected') setLease(Boolean(frame.lease?.held));
     if (frame.type === 'event' && frame.event?.kind === 'output') {
       setTerminal((current) => current + (frame.event.data?.text || ''));
-      setApprovalPrompt(null);
     }
+    if (frame.type === 'event' && frame.event?.kind === 'input_requested') setApprovalPrompt(null);
     if (frame.type === 'event' && frame.event?.kind === 'approval_requested' && frame.event.data?.prompt) {
       setApprovalPrompt(frame.event.data.prompt);
     }
@@ -97,6 +97,7 @@ export default function LiveControlPage() {
   const sendTerminalInput = useCallback((data) => {
     if (!lease || status !== 'connected' || session?.worker_status !== 'online') return;
     if (!sendInput(data)) setError('Stream is not connected. Reconnect before sending input.');
+    else setApprovalPrompt(null);
   }, [lease, sendInput, session?.worker_status, status]);
 
   const claim = async () => {
@@ -140,7 +141,7 @@ export default function LiveControlPage() {
     event.preventDefault();
     if (!input || !lease) return;
     if (!sendInput(input.endsWith('\n') ? input : `${input}\n`)) setError('Stream is not connected. Reconnect before sending input.');
-    else setInput('');
+    else { setInput(''); setApprovalPrompt(null); }
   };
 
   if (!token) return <section className="mx-auto max-w-3xl p-6"><h1 className="text-xl font-bold">Relay access required</h1><p className="mt-2 text-slate-600 dark:text-slate-300">Pair this browser with the relay before opening a live control session.</p></section>;
