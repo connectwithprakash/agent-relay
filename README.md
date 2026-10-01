@@ -166,23 +166,26 @@ The browser terminal reports its size over the control stream after a 150 ms deb
 
 ### Approval banner
 
-When the worker recognizes a Claude Code permission prompt in the terminal output, it reports it once as an `approval_requested` event and the live page shows the prompt text in a banner above the terminal. The banner has only a Dismiss button; the controller answers by typing into the terminal or the input box, which uses the normal input path. It clears on Dismiss, when a newer approval arrives, when you send input from the page, or when a later `input_requested` event is seen. Ordinary terminal redraws do not clear it.
+When the worker recognizes a Claude Code permission prompt in the terminal output, it reports it once as an `approval_requested` event and the live page shows the prompt text in a banner above the terminal. The banner has only a Dismiss button; the controller answers by typing into the terminal or the input box, which uses the normal input path. It clears on Dismiss, when a newer approval arrives, when you send input from the page, or when an `input_requested` event is seen. The relay pushes live `input_requested` events to the other connected controllers of the session and never back to the sender, so a second tab clears its banner when the first tab answers; a reconnect replay also clears a banner whose prompt was already answered. Ordinary terminal redraws do not clear it.
 
 Detection is best effort. It matches the "Do you want to ... 1. Yes ... No" dialog shape, and it has been verified only against hand-written fixtures and the folder-trust dialog, never against a captured real permission prompt. A prompt that is missed simply shows no banner; the terminal still shows it and you can answer there.
 
-### tmux profile
+### Session adoption
 
-`claude-code-tmux` is a second allowlisted profile that runs Claude Code inside a tmux session, so the session can outlive a worker restart. It needs tmux on the worker device and the same `--claude-workdir` and `--claude-executable` settings as `claude-code`. When the restarted worker finds the tmux session alive it reports `session_adopted`; a detached session then returns to `ready` and a controller claims a new lease. A failed session is never resurrected.
+A `claude-code-tmux` session can outlive its worker process (see Worker setup for the profile). The server moves a `detached` session back to `ready` with a new version only when the session's own worker, while `online`, posts a `session_adopted` event with no data; any other state returns 409 and changes nothing. A failed session is never adopted and leases are not restored, so a controller claims a new lease. The live page refreshes the session when it sees `session_adopted`, so the badge returns to ready without a reload.
+
+Automatic adoption reporting by the worker ships with the separate worker-adopt PR and is not on main yet. Until it merges, a restarted worker does not post `session_adopted` by itself.
 
 ### Control stream frames
 
 | Direction | Frame or request | Stored event kind | Notes |
 |---|---|---|---|
-| Controller to worker | `{"type":"input","input":"..."}` | `input_requested` | Needs an active lease. Also pushed to other connected controllers. |
+| Controller to worker | `{"type":"input","input":"..."}` | `input_requested` | Needs an active lease. Pushed live to the other connected controllers of the session, never to the sender. The input text is in the event, so it may contain secrets. |
 | Controller to worker | `{"type":"resize","cols":N,"rows":N}` | `resize_requested` | Needs an active lease. Integers only, cols 20 to 500, rows 5 to 200. |
 | Worker to controller | `{"type":"output","text":"..."}` | `output` | Terminal bytes as text. |
 | Worker to controller | `{"type":"approval","prompt":"..."}` | `approval_requested` | Non-empty string, at most 4096 bytes. |
-| Worker to server (HTTP) | event `session_adopted` | `session_adopted` | Only accepted for a detached session from its own online worker. |
+| Worker to server (HTTP) | event `session_adopted`, no data | `session_adopted` | Only for a detached session from its own online worker, otherwise 409. Moves the session to `ready`, no lease restored. Pushed live to controllers. |
+| Worker to server (HTTP) | event `session_exited` or `session_failed` | same | Marks the session `failed` and releases the lease. Not pushed live; controllers see it in the next replay. |
 | Server to controller | `{"type":"error","code":"..."}` | none | Codes: `invalid_resize`, `invalid_input`, `invalid_output`, `invalid_approval`, `invalid_frame`, `lease_required`, `worker_unavailable`. |
 
 The full contract is in `docs/control-stream-resize-approval.md`.

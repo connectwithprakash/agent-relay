@@ -150,17 +150,20 @@ sequenceDiagram
     participant W as Worker
     participant R as Agent Relay
     participant B as Browser controller
+    participant B2 as Other controller tab
     actor User
 
     H-->>W: Terminal output containing a permission prompt
     W->>R: output (unchanged stream)
     W->>R: approval frame, once per prompt
     R-->>B: approval_requested event with prompt text
+    R-->>B2: approval_requested event with prompt text
     B-->>User: Approval banner above the terminal
     User->>B: Type the answer in the terminal or input box
     B->>R: input frame (existing input path, needs lease)
+    B->>B: Clear the banner locally
     R->>W: input_requested event
-    R-->>B: input_requested event (clears the banner)
+    R-->>B2: input_requested event (clears that tab's banner)
     W->>H: Write the answer to the terminal
     H-->>W: Resulting output
     W->>R: output
@@ -173,7 +176,7 @@ sequenceDiagram
 - Detection belongs to the worker. It matches known Claude Code permission prompts, reports each prompt once, and never alters the `output` stream.
 - The prompt is a non-empty string of at most 4096 bytes. The browser renders it as plain text and ignores any other payload.
 - There is no approve or reject frame. The controller answers with ordinary `input`, so only the holder of an active lease can respond.
-- The banner clears when the user dismisses it, when a newer approval arrives, when the user sends input from the page, or when a later `input_requested` event is seen. Terminal redraws such as spinners do not clear it, and a replay that ends with `input_requested` leaves no stale banner.
+- The banner clears when the user dismisses it, when a newer approval arrives, when the user sends input from the page, or when an `input_requested` event is seen. The relay pushes live `input_requested` events to the other connected controllers and never back to the sender, so the sending tab clears its own banner locally and other tabs clear on the event; a reconnect replay that ends with `input_requested` leaves no stale banner. Terminal redraws such as spinners do not clear it.
 - The text of an `input_requested` event is never displayed or echoed into the terminal by the browser.
 
 ---
