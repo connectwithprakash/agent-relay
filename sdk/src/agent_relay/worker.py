@@ -533,6 +533,10 @@ class WorkerDaemon:
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
         self._adoption_pending: dict[str, _PendingAdoption] = {}
+        self._session_errors: dict[str, str] = {}
+        self._ready_pending: set[str] = set()
+        self._unsent_output: dict[str, str] = {}
+        self._unsent_prompts: dict[str, list[str]] = {}
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -586,15 +590,29 @@ class WorkerDaemon:
         del self._adoption_pending[session_id]
 
     def _relay_output(self, session_id: str, output: str) -> None:
-        """Append terminal output as an event and report any permission prompts it completes."""
-        if not output:
-            return
-        self.client.append_session_event(self.relay_id, session_id, "output", {"text": output})
-        detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
-        for prompt in detector.feed(output):
-            self.client.append_session_event(
-                self.relay_id, session_id, "approval_requested", {"prompt": prompt}
-            )
+        """Append terminal output as an event and report any permission prompts it completes.
+
+        Output or prompts the backend did not accept are kept and sent first on the next call.
+        """
+        prompts = self._unsent_prompts.pop(session_id, [])
+        output = self._unsent_output.pop(session_id, "") + output
+        if output:
+            try:
+                self.client.append_session_event(self.relay_id, session_id, "output", {"text": output})
+            except (AgentRelayError, httpx.HTTPError):
+                self._unsent_output[session_id] = output
+                self._unsent_prompts[session_id] = prompts
+                raise
+            detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
+            prompts = prompts + detector.feed(output)
+        for index, prompt in enumerate(prompts):
+            try:
+                self.client.append_session_event(
+                    self.relay_id, session_id, "approval_requested", {"prompt": prompt}
+                )
+            except (AgentRelayError, httpx.HTTPError):
+                self._unsent_prompts[session_id] = prompts[index:]
+                raise
 
     def _record_cursor(self, session_id: str, pty_session, sequence: int) -> None:
         """Advance the event cursor, persisting it first so a crash cannot replay input."""
@@ -629,48 +647,69 @@ class WorkerDaemon:
             heartbeat(self.relay_id, self.worker_id)
         for session in self.client.list_worker_sessions(self.relay_id, self.worker_id):
             session_id = session["session_id"]
-            if session["status"] in {"detached", "ready", "controlled"} and session_id not in self._sessions:
-                if self._reattach(session) is None:
-                    self.client.append_session_event(
-                        self.relay_id,
-                        session_id,
-                        "session_failed",
-                        {"reason": "worker_restarted"},
-                    )
-                    continue
-            if session["status"] == "starting" and session_id not in self._sessions:
-                self._sessions[session_id] = self._start_session(session)
-                self.client.mark_session_ready(self.relay_id, session_id)
+            try:
+                self._process_session(session)
+            except (AgentRelayError, httpx.HTTPError) as error:
+                self._log_session_error(session_id, error)
+            else:
+                self._session_errors.pop(session_id, None)
 
-            pty_session = self._sessions.get(session_id)
-            if not pty_session:
-                continue
-            self._report_pending_adoption(session_id)
-            exit_code = pty_session.poll()
-            if exit_code is not None:
-                self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
+    def _log_session_error(self, session_id: str, error: Exception) -> None:
+        """Log a session's backend failure once per distinct error; the pass moves on."""
+        description = f"{type(error).__name__}: {error}" if isinstance(error, httpx.HTTPError) else str(error)
+        if self._session_errors.get(session_id) != description:
+            print(f"Session {session_id} failed this pass, will retry: {description}", file=sys.stderr)
+            self._session_errors[session_id] = description
+
+    def _process_session(self, session: dict) -> None:
+        """Start, adopt, or relay terminal I/O for one session."""
+        session_id = session["session_id"]
+        if session["status"] in {"detached", "ready", "controlled"} and session_id not in self._sessions:
+            if self._reattach(session) is None:
                 self.client.append_session_event(
                     self.relay_id,
                     session_id,
-                    "session_exited",
-                    {"exit_code": exit_code},
+                    "session_failed",
+                    {"reason": "worker_restarted"},
                 )
-                pty_session.close()
-                del self._sessions[session_id]
-                self._approval_detectors.pop(session_id, None)
-                self._adoption_pending.pop(session_id, None)
-                continue
-            events = self.client.get_session_events(
-                self.relay_id, session_id, self._cursors.get(session_id, 0)
-            )
-            for event in events:
-                self._record_cursor(session_id, pty_session, event["sequence"])
-                if event["kind"] == "input_requested":
-                    pty_session.write(event["data"]["input"])
-                elif event["kind"] == "resize_requested":
-                    self._apply_resize(pty_session, event["data"])
+                return
+        if session["status"] == "starting" and session_id not in self._sessions:
+            self._sessions[session_id] = self._start_session(session)
+            self._ready_pending.add(session_id)
+        if session_id in self._ready_pending:
+            self.client.mark_session_ready(self.relay_id, session_id)
+            self._ready_pending.discard(session_id)
 
-            self._relay_output(session_id, pty_session.read(timeout=0.05 if events else 0.0))
+        pty_session = self._sessions.get(session_id)
+        if not pty_session:
+            return
+        self._report_pending_adoption(session_id)
+        exit_code = pty_session.poll()
+        if exit_code is not None:
+            self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
+            self.client.append_session_event(
+                self.relay_id,
+                session_id,
+                "session_exited",
+                {"exit_code": exit_code},
+            )
+            pty_session.close()
+            del self._sessions[session_id]
+            self._approval_detectors.pop(session_id, None)
+            self._adoption_pending.pop(session_id, None)
+            self._ready_pending.discard(session_id)
+            return
+        events = self.client.get_session_events(
+            self.relay_id, session_id, self._cursors.get(session_id, 0)
+        )
+        for event in events:
+            self._record_cursor(session_id, pty_session, event["sequence"])
+            if event["kind"] == "input_requested":
+                pty_session.write(event["data"]["input"])
+            elif event["kind"] == "resize_requested":
+                self._apply_resize(pty_session, event["data"])
+
+        self._relay_output(session_id, pty_session.read(timeout=0.05 if events else 0.0))
 
     def close(self) -> None:
         """Stop owned PTYs; tmux sessions are detached and left running for re-attach."""
@@ -679,6 +718,10 @@ class WorkerDaemon:
         self._sessions.clear()
         self._approval_detectors.clear()
         self._adoption_pending.clear()
+        self._session_errors.clear()
+        self._ready_pending.clear()
+        self._unsent_output.clear()
+        self._unsent_prompts.clear()
 
     def run_stream_with_reconnect(self, session_id: str, *, max_attempts: int = 5, sleep=time.sleep, **stream_options) -> None:
         """Run the live stream, reconnecting with doubling backoff up to max_attempts connections."""
