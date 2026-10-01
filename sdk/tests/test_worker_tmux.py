@@ -125,7 +125,7 @@ def test_invalid_session_ids_are_rejected(tmp_path, socket_name, state_dir):
 
 def test_start_fails_closed_without_a_valid_executable_or_workdir(tmp_path, socket_name, state_dir, monkeypatch):
     real_which = shutil.which
-    monkeypatch.setattr("agent_relay.worker.shutil.which", lambda name: None if name == "claude" else real_which(name))
+    monkeypatch.setattr("agent_relay.worker_common.shutil.which", lambda name: None if name == "claude" else real_which(name))
     with pytest.raises(RuntimeError, match="not installed"):
         ManagedTmuxSession.start("s1", str(tmp_path), None, socket=socket_name, state_dir=state_dir)
     with pytest.raises(ValueError, match="workdir"):

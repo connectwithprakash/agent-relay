@@ -34,7 +34,7 @@ def test_unknown_profile_is_rejected_without_starting_a_process():
 
 
 def test_claude_profile_fails_closed_when_executable_is_missing(monkeypatch):
-    monkeypatch.setattr("agent_relay.worker.shutil.which", lambda name: None)
+    monkeypatch.setattr("agent_relay.worker_common.shutil.which", lambda name: None)
 
     with pytest.raises(RuntimeError, match="not installed"):
         ManagedPtySession.start("claude-code", "/tmp")
