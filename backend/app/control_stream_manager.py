@@ -15,10 +15,10 @@ class ControlStreamManager:
         if not self._connections[key]:
             self._connections.pop(key, None)
 
-    async def send_to_role(self, key, role, frame):
+    async def send_to_role(self, key, role, frame, exclude=None):
         disconnected = []
-        for peer_role, websocket in self._connections.get(key, []):
-            if peer_role != role:
+        for peer_role, websocket in list(self._connections.get(key, [])):
+            if peer_role != role or websocket is exclude:
                 continue
             try:
                 await websocket.send_json(frame)

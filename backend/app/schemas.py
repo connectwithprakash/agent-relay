@@ -211,8 +211,33 @@ class InputRequest(BaseModel):
     input: str = Field(min_length=1, max_length=8192)
     expected_version: Optional[int] = Field(default=None, ge=0)
 
+    @field_validator("input")
+    @classmethod
+    def validate_input_is_utf8(cls, value: str) -> str:
+        if utf8_size(value) is None:
+            raise ValueError("Input must be valid UTF-8 text")
+        return value
+
 
 MAX_APPROVAL_PROMPT_BYTES = 4096
+
+
+def utf8_size(value: str) -> Optional[int]:
+    """UTF-8 byte length of value, or None when it holds lone surrogates."""
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return None
+
+
+def _contains_lone_surrogate(value: object) -> bool:
+    if isinstance(value, str):
+        return utf8_size(value) is None
+    if isinstance(value, dict):
+        return any(_contains_lone_surrogate(k) or _contains_lone_surrogate(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_contains_lone_surrogate(item) for item in value)
+    return False
 
 
 def validate_approval_data(data: object) -> dict:
@@ -222,13 +247,14 @@ def validate_approval_data(data: object) -> dict:
     prompt = data["prompt"]
     if not isinstance(prompt, str) or not prompt:
         raise ValueError("Approval prompt must be a non-empty string")
-    if len(prompt.encode("utf-8")) > MAX_APPROVAL_PROMPT_BYTES:
+    size = utf8_size(prompt)
+    if size is None or size > MAX_APPROVAL_PROMPT_BYTES:
         raise ValueError(f"Approval prompt exceeds {MAX_APPROVAL_PROMPT_BYTES} bytes")
     return data
 
 
 class EventRequest(BaseModel):
-    kind: Literal["output", "approval_requested", "session_exited", "session_failed"]
+    kind: Literal["output", "approval_requested", "session_adopted", "session_exited", "session_failed"]
     data: dict = Field(default_factory=dict)
 
     @field_validator("data")
@@ -240,6 +266,10 @@ class EventRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_kind_data(self):
+        if _contains_lone_surrogate(self.data):
+            raise ValueError("Event data must be valid UTF-8 text")
         if self.kind == "approval_requested":
             validate_approval_data(self.data)
+        if self.kind == "session_adopted" and self.data:
+            raise ValueError("session_adopted carries no data")
         return self
