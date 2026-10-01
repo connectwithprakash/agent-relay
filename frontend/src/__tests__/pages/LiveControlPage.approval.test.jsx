@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../components/TerminalViewport', () => ({
@@ -302,5 +302,27 @@ describe('LiveControlPage session adoption', () => {
 
     expect(screen.getByText('session failed')).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('shows the new session with a lower version after navigating between live URLs', async () => {
+    const other = { ...session, session_id: 'session-2', profile: 'other-profile', status: 'ready', controller_agent: null, lease_expires_at: null, version: 1 };
+    const high = { ...detached, status: 'ready', version: 9 };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({ ok: true, json: async () => ({ sessions: [high, other] }) })));
+    function Switch() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate('/relay/relay-1/sessions/session-2/live')}>go to second</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+        <Switch />
+        <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('session-1');
+
+    fireEvent.click(screen.getByText('go to second'));
+
+    expect(await screen.findByText('other-profile')).toBeInTheDocument();
+    expect(screen.getByText('session-2')).toBeInTheDocument();
   });
 });

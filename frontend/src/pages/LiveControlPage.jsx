@@ -40,6 +40,11 @@ function WorkerBadge({ status }) {
 
 export default function LiveControlPage() {
   const { relayId, sessionId } = useParams();
+  return <LiveControlSession key={`${relayId}/${sessionId}`} />;
+}
+
+function LiveControlSession() {
+  const { relayId, sessionId } = useParams();
   const token = getToken(relayId);
   const agent = getAgent(relayId);
   const [session, setSessionState] = useState(null);
