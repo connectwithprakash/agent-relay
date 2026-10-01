@@ -79,7 +79,7 @@ export default function TerminalViewport({ output, inputEnabled, onInput, onResi
 
   return (
     <>
-      {approvalPrompt && (
+      {typeof approvalPrompt === 'string' && approvalPrompt && (
         <div role="alert" className="flex max-h-40 items-start justify-between gap-3 overflow-auto border-b border-amber-700 bg-amber-950 px-4 py-3 text-sm text-amber-100">
           <div className="min-w-0">
             <p className="font-semibold">Approval requested</p>

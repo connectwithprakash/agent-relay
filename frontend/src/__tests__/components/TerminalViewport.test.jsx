@@ -121,6 +121,11 @@ describe('TerminalViewport', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
+    it.each([[42], [{ text: 'x' }], [['a']], [true]])('renders no banner for a non-string prompt %j', (prompt) => {
+      render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt={prompt} />);
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
     it('shows the prompt text as plain text', () => {
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt="Allow <b>rm -rf</b>?" />);
       expect(screen.getByRole('alert')).toHaveTextContent('Allow <b>rm -rf</b>?');

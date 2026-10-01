@@ -160,6 +160,36 @@ For the browser UI, create a short-lived controller-browser invitation with `age
 
 After a browser controller is paired, its Home page exposes **Your workers → Manage workers** and the header exposes **Workers** when one controller relay is saved. The Controller dashboard can create and copy one-time codes for another browser or an unpaired work-computer participant. A work-computer code is redeemed by the installed local Worker app; that native component alone owns the approved local Claude executable and worktree.
 
+### Terminal resize
+
+The browser terminal reports its size over the control stream after a 150 ms debounce, only while the stream is connected and the controller holds the lease, and only for whole numbers within 20 to 500 columns and 5 to 200 rows. The worker applies the size to the PTY or tmux window and sends no reply. Rejected sizes come back as an `invalid_resize` error frame, which the page shows without disturbing the terminal.
+
+### Approval banner
+
+When the worker recognizes a Claude Code permission prompt in the terminal output, it reports it once as an `approval_requested` event and the live page shows the prompt text in a banner above the terminal. The banner has only a Dismiss button; the controller answers by typing into the terminal or the input box, which uses the normal input path. It clears on Dismiss, when a newer approval arrives, when you send input from the page, or when an `input_requested` event is seen. The relay pushes live `input_requested` events to the other connected controllers of the session and never back to the sender, so a second tab clears its banner when the first tab answers; a reconnect replay also clears a banner whose prompt was already answered. Ordinary terminal redraws do not clear it.
+
+Detection is best effort. It matches the "Do you want to ... 1. Yes ... No" dialog shape, and it has been verified only against hand-written fixtures and the folder-trust dialog, never against a captured real permission prompt. A prompt that is missed simply shows no banner; the terminal still shows it and you can answer there.
+
+### Session adoption
+
+A `claude-code-tmux` session can outlive its worker process (see Worker setup for the profile). The server moves a `detached` session back to `ready` with a new version only when the session's own worker, while `online`, posts a `session_adopted` event with no data; a stale or offline worker, or a session in any other state, gets 409 and nothing changes, and callers other than the session's own worker get 403. A failed session is never adopted and leases are not restored, so a controller claims a new lease. The live page refreshes the session when it sees `session_adopted`, so the badge returns to ready without a reload.
+
+When a restarted worker re-attaches to a tmux session whose status is `detached`, it posts `session_adopted` by itself. A failed report is retried with a delay that doubles from 1 to 30 seconds, and a 409 is dropped silently because the session already moved on. A session already `ready` or `controlled` is not reported.
+
+### Control stream frames
+
+| Direction | Frame or request | Stored event kind | Notes |
+|---|---|---|---|
+| Controller to worker | `{"type":"input","input":"..."}` | `input_requested` | Needs an active lease. Pushed live to the other connected controllers of the session, never to the sender. The input text is in the event, so it may contain secrets. |
+| Controller to worker | `{"type":"resize","cols":N,"rows":N}` | `resize_requested` | Needs an active lease. Integers only, cols 20 to 500, rows 5 to 200. |
+| Worker to controller | `{"type":"output","text":"..."}` | `output` | Terminal bytes as text. |
+| Worker to controller | `{"type":"approval","prompt":"..."}` | `approval_requested` | Non-empty string, at most 4096 bytes. |
+| Worker to server (HTTP) | event `session_adopted`, no data | `session_adopted` | Only for a detached session from its own online worker, otherwise 409. Moves the session to `ready`, no lease restored. Pushed live to controllers. |
+| Worker to server (HTTP) | event `session_exited` or `session_failed` | same | Marks the session `failed` and releases the lease. Pushed live to controllers after the change is committed. Changes the server derives itself, such as a stale worker marking its sessions `detached`, are not pushed live and appear on the next session fetch. |
+| Server to controller | `{"type":"error","code":"..."}` | none | Codes: `invalid_resize`, `invalid_input`, `invalid_output`, `invalid_approval`, `invalid_frame`, `lease_required`, `worker_unavailable`. |
+
+The full contract is in `docs/control-stream-resize-approval.md`.
+
 ### Browser-to-worker sequence
 
 ```mermaid
