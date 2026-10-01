@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { afterEach, describe, it, expect, beforeAll, vi } from 'vitest';
 import MessageList from '../../components/MessageList';
 
 // jsdom does not implement scrollIntoView
@@ -56,5 +56,20 @@ describe('MessageList', () => {
     const rightAligned = Array.from(messageRows).filter(el => el.classList.contains('justify-end'));
     // Only agent-1 messages should be right-aligned
     expect(rightAligned.length).toBe(1);
+  });
+
+  describe('offset-less server timestamps', () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it.each([
+      ['Asia/Kolkata', '04:00 PM'],
+      ['America/Los_Angeles', '02:30 AM'],
+      ['UTC', '10:30 AM'],
+    ])('shows 10:30 UTC in %s as %s', (tz, expected) => {
+      vi.stubEnv('TZ', tz);
+      const messages = [{ id: 'm', agent: 'agent-1', content: 'hi', created_at: '2025-01-15T10:30:00' }];
+      render(<MessageList messages={messages} currentAgent="agent-1" />);
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
   });
 });

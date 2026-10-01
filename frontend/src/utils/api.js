@@ -190,3 +190,24 @@ export const connectWebSocket = (relayId, agent, onMessage, token = null) => {
 
   return ws;
 };
+
+/**
+ * Extend the current holder's control lease on a session. Rejects with an Error
+ * carrying the HTTP status (when there was a response) so callers can tell a
+ * refused renewal from a network failure.
+ */
+export const renewLease = async (relayId, sessionId, { expectedVersion, leaseSeconds }) => {
+  const { getToken } = await import('./auth.js');
+  const token = getToken(relayId);
+  if (!token) throw new Error('No relay credential stored for this browser.');
+  const response = await safeFetch(`${API_BASE_URL}/relays/${relayId}/sessions/${sessionId}/lease/renew`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ lease_seconds: leaseSeconds, expected_version: expectedVersion }),
+  });
+  if (response.ok) return response.json();
+  const detail = (await response.json().catch(() => ({}))).detail;
+  const error = new Error(detail || `Failed to renew lease: ${response.statusText}`);
+  error.status = response.status;
+  throw error;
+};

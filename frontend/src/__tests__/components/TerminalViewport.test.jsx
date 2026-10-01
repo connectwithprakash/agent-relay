@@ -118,22 +118,28 @@ describe('TerminalViewport', () => {
 
     it('shows nothing without a pending approval', () => {
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} />);
-      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
     });
 
     it.each([[42], [{ text: 'x' }], [['a']], [true]])('renders no banner for a non-string prompt %j', (prompt) => {
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt={prompt} />);
-      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('status')).toBeNull();
     });
 
     it('shows the prompt text as plain text', () => {
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt="Allow <b>rm -rf</b>?" />);
-      expect(screen.getByRole('alert')).toHaveTextContent('Allow <b>rm -rf</b>?');
+      expect(screen.getByRole('status')).toHaveTextContent('Allow <b>rm -rf</b>?');
     });
 
     it('caps the banner height so a long prompt cannot push the terminal away', () => {
       render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt={'x'.repeat(4096)} />);
-      expect(screen.getByRole('alert')).toHaveClass('max-h-40', 'overflow-auto');
+      expect(screen.getByRole('status')).toHaveClass('max-h-40', 'overflow-auto');
+    });
+
+    it('announces politely and is not an alert so it cannot be mistaken for an error', () => {
+      render(<TerminalViewport output="" inputEnabled onInput={vi.fn()} approvalPrompt="Proceed?" />);
+      expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+      expect(screen.queryByRole('alert')).toBeNull();
     });
 
     it('calls onDismissApproval when dismissed', () => {

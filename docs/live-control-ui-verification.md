@@ -16,7 +16,7 @@ This records a run of the control UI in a real browser against a real backend an
 
 Evidence is DOM reads (`.xterm-rows` text, badge text, `[role=alert]` text), the backend events API read from inside the page, and screenshots taken during the run. Screenshots are not committed.
 
-Two environment notes. `npm install` failed with E401 on the configured private registry, so dependencies were installed with `npm ci --registry https://registry.npmjs.org/`. The lease the UI requests lasts 60 seconds and the UI never renews it, so several steps had to be done quickly or re-claimed.
+Two environment notes. `npm install` failed with E401 on the configured private registry, so dependencies were installed with `npm ci --registry https://registry.npmjs.org/`. The runs in the first sections predate lease renewal: the UI then requested a 60 second lease and never renewed it, so several steps had to be done quickly or re-claimed. See the lease renewal section.
 
 ## Results
 
@@ -27,7 +27,7 @@ Two environment notes. `npm install` failed with E401 on the configured private 
 | (c) Approval banner, dismiss, spinner output, answer | Passed |
 | (d) Second tab sees input from the first and clears its banner | Passed, with a caveat on identity |
 | (e) Worker stopped, then restarted, failed session not resurrected | Passed after two fixes |
-| (f) Console errors | No uncaught errors; two benign 409s and one dev warning |
+| (f) Console errors | No uncaught errors; benign 409s and one dev warning |
 
 ### (a) Typing
 
@@ -78,11 +78,31 @@ Each has a test written first, failing before the fix.
 2. Session badge stale after `worker_unavailable` (`5e50fe8`). The page now refetches the session so the badge and lease follow the server.
 3. Take control offered for a failed session (`4b362ad`). The button is now disabled when the session is failed.
 
-## Not fixed, for follow-up
+## Follow-up fixes on branch `frontend-lease`
 
-- The UI claims a 60 second lease and never renews it or shows a countdown, so control ends silently after a minute.
+Each has a test written first.
+
+- Approval banner is now `role="status"` with `aria-live="polite"`; stream errors stay `role="alert"`, so the two are distinguishable.
+- `MessageList.jsx` and `RelayCard.jsx` now use `parseServerTimestamp`. Tests run under Asia/Kolkata, America/Los_Angeles and UTC. The browser was not used to look at message times; the fix is covered by the component tests only.
+- Worker badge after a live `session_failed` or `session_exited`: the event is posted by the session's own worker, so that worker is online at that moment and "offline" would be the wrong inference. The page marks the session failed at once and then refetches, so the worker badge, version and lease come from the server instead of being guessed.
+- Lease countdown: a `Lease m:ss` badge shows while the page holds the lease on a session that is not failed or detached. At zero the page drops local control and refetches once, with no loop and no timer afterwards. No timer runs for a view-only tab or a failed or detached session, and it stops on unmount. Verified in the real browser: the badge counted down from 0:59 against the real server timestamp, then at expiry the page showed Take control with no error, in the same document, with exactly one session fetch from the page at the expiry second and none afterwards.
+
+## Lease renewal (backend `POST .../lease/renew`, frontend auto-renew)
+
+The backend added an atomic renew route for the current holder. The page now renews once, halfway through the remaining lease, while it holds a lease on a controlled session over a connected stream with an online worker. The lease length is the same 60 seconds used for claiming. It adopts the returned session (new version) before the next renew or release, retries once at three quarters of the lease after a network error or 5xx (never after a 409 or other 4xx), refetches on a conflict, remembers a failure for that expiry so there is no retry loop, and then lets the normal expiry transition end control. It never renews from a view-only tab, a failed or detached session, a disconnected stream or an offline worker, and the timer is cleared on unmount. A `lease_renewed` event for this controller's own agent refreshes the session; events for another agent are ignored.
+
+Real browser run (fixture-shell only, no Claude):
+
+- Control was held for about 165 seconds, nearly three lease periods. The badge counted down from 0:58 and jumped back to 0:58 about every 30 seconds, with no alert and no reload.
+- Afterwards typing `still alive after renewals` reached the worker and `echo:still alive after renewals` came back. The server showed 4 `lease_renewed` events, 1 `lease_claimed` and 0 `lease_released` at that point.
+- The worker was then stopped with SIGTERM. Renewal kept succeeding while the server still counted the worker as online (about 90 seconds). Then one renew returned 409, and the page went to `session detached`, `worker offline`, Take control, with no alert. The backend log shows 7 successful renewals followed by exactly one 409 and no further renew requests.
+
+Lease arithmetic (the countdown, the held-lease check and the renew timing) uses the browser's clock against the server's timestamps, so a client clock more than about 30 seconds off the server shows leases expiring early or late.
+
+Behavior to know: a tab that stays open and connected keeps the lease alive indefinitely, including a hidden tab, until the stream drops, the worker goes away or the user releases control.
+
+## Open items
+
 - Stale worker expiry is not pushed and the page does not poll, so a dead worker can show as online until the next interaction.
-- The worker badge stays offline after a restarted worker comes back until the page refetches.
-- Approval banner and error alert share `role="alert"`.
-- Chat message and relay card timestamps (`MessageList.jsx`, `RelayCard.jsx`) use `new Date(timestamp)` on the same offset-less format and may show times shifted by the local offset. Not checked in a browser.
+- Optional idle cutoff: stop renewing after N minutes without local input, so an abandoned open tab does not hold control indefinitely.
 - Distinct controller credentials in (d) and a real tmux profile were not exercised.
