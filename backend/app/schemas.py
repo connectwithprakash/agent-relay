@@ -4,7 +4,7 @@ Pydantic schemas for request/response validation
 import json
 import re
 from typing import Optional, Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Maximum serialized size for structured data payloads (64 KB)
 MAX_DATA_SIZE_BYTES = 65536
@@ -212,6 +212,21 @@ class InputRequest(BaseModel):
     expected_version: Optional[int] = Field(default=None, ge=0)
 
 
+MAX_APPROVAL_PROMPT_BYTES = 4096
+
+
+def validate_approval_data(data: object) -> dict:
+    """Shared contract for approval_requested data, used by HTTP and WebSocket paths."""
+    if not isinstance(data, dict) or set(data) != {"prompt"}:
+        raise ValueError("Approval data must contain only a prompt")
+    prompt = data["prompt"]
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("Approval prompt must be a non-empty string")
+    if len(prompt.encode("utf-8")) > MAX_APPROVAL_PROMPT_BYTES:
+        raise ValueError(f"Approval prompt exceeds {MAX_APPROVAL_PROMPT_BYTES} bytes")
+    return data
+
+
 class EventRequest(BaseModel):
     kind: Literal["output", "approval_requested", "session_exited", "session_failed"]
     data: dict = Field(default_factory=dict)
@@ -222,3 +237,9 @@ class EventRequest(BaseModel):
         if len(json.dumps(data).encode("utf-8")) > MAX_DATA_SIZE_BYTES:
             raise ValueError(f"Serialized data exceeds maximum size of {MAX_DATA_SIZE_BYTES} bytes")
         return data
+
+    @model_validator(mode="after")
+    def validate_kind_data(self):
+        if self.kind == "approval_requested":
+            validate_approval_data(self.data)
+        return self

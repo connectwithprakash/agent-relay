@@ -470,3 +470,80 @@ def test_wrong_role_frames_are_rejected_and_nothing_is_stored_or_forwarded(clien
     ).json()["events"]
     spoofed_data = {key: value for key, value in frame.items() if key != "type"}
     assert all(event["data"] != spoofed_data for event in events)
+
+
+def _post_event(client, relay, worker_token, session_id, data):
+    return client.post(
+        f"/relays/{relay['relay_id']}/sessions/{session_id}/events",
+        json={"kind": "approval_requested", "data": data},
+        headers=_auth(worker_token),
+    )
+
+
+@pytest.mark.parametrize("data", [
+    {"prompt": {"x": 1}},
+    {"prompt": ["a"]},
+    {"prompt": 5},
+    {"prompt": None},
+    {"prompt": ""},
+    {"prompt": "x" * 4097},
+    {"prompt": "é" * 2049},
+    {},
+    {"text": "wrong key"},
+    {"prompt": "ok", "extra": 1},
+])
+def test_http_approval_event_rejects_invalid_data_with_422_and_stores_nothing(client, data):
+    relay, worker_token, session_id = _ready_control_session(client)
+
+    response = _post_event(client, relay, worker_token, session_id, data)
+
+    assert response.status_code == 422
+    assert "approval_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_http_approval_event_accepts_prompt_at_the_byte_limit(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+
+    assert _post_event(client, relay, worker_token, session_id, {"prompt": "x" * 4096}).status_code == 202
+    assert _post_event(client, relay, worker_token, session_id, {"prompt": "é" * 2048}).status_code == 202
+
+
+def test_http_approval_event_does_not_reach_controller_of_another_session(client):
+    relay_a, worker_token_a, session_a = _ready_control_session(client)
+    relay_b, worker_token_b, session_b = _ready_control_session(client)
+    path_b = f"/relays/{relay_b['relay_id']}/sessions/{session_b}/stream?cursor=0"
+    path_a = f"/relays/{relay_a['relay_id']}/sessions/{session_a}/stream?cursor=0"
+
+    with client.websocket_connect(path_b, headers=_ws_headers(relay_b["token"])) as controller_b:
+        with client.websocket_connect(path_a, headers=_ws_headers(relay_a["token"])) as controller_a:
+            _receive_until(controller_b, "connected")
+            _receive_until(controller_a, "connected")
+            assert _post_event(client, relay_a, worker_token_a, session_a, {"prompt": "for A"}).status_code == 202
+            _receive_until(controller_a, "event", "approval_requested")
+            # B must see its own next event first, never A's approval.
+            worker_b = client.post(
+                f"/relays/{relay_b['relay_id']}/sessions/{session_b}/events",
+                json={"kind": "output", "data": {"text": "b marker"}},
+                headers=_auth(worker_token_b),
+            )
+            assert worker_b.status_code == 202
+            seen = []
+            for _ in range(10):
+                event = _receive_until(controller_b, "event")["event"]
+                seen.append(event)
+                if event["data"] == {"text": "b marker"}:
+                    break
+            assert all(event["kind"] != "approval_requested" for event in seen)
+
+
+@pytest.mark.parametrize("frame", [[], [1, 2], "text", 5, None])
+def test_non_object_frame_gets_invalid_frame_and_stream_stays_open(client, frame):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        _receive_until(controller_ws, "connected")
+        controller_ws.send_json(frame)
+        assert _receive_until(controller_ws, "error")["code"] == "invalid_frame"
+        controller_ws.send_json(frame)
+        assert _receive_until(controller_ws, "error")["code"] == "invalid_frame"

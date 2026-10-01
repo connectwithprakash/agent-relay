@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..database import SessionLocal
 from ..models import AgentToken, ControlEvent, ControlLease, HarnessSession, Worker
+from ..schemas import validate_approval_data
 from ..security import digest
 from ..control_stream_manager import manager
 from .control import _as_utc, _event, _event_response, _expire_stale_workers, _now
@@ -13,7 +14,6 @@ router = APIRouter()
 
 RESIZE_COLS = (20, 500)
 RESIZE_ROWS = (5, 200)
-MAX_APPROVAL_PROMPT_BYTES = 4096
 
 
 def _is_bounded_int(value, bounds) -> bool:
@@ -73,6 +73,9 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
         while True:
             frame = await websocket.receive_json()
             try:
+                if not isinstance(frame, dict):
+                    await websocket.send_json({"type": "error", "code": "invalid_frame", "message": "Frame must be a JSON object"})
+                    continue
                 frame_type = frame.get("type")
                 if role == "controller" and frame_type in {"input", "resize"}:
                     _expire_stale_workers(db, relay_id)
@@ -116,11 +119,12 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                     payload = {"type": "event", "event": _event_response(event)}
                     await manager.send_to_role(key, "controller", payload)
                 elif role == "worker" and frame_type == "approval":
-                    prompt = frame.get("prompt")
-                    if not isinstance(prompt, str) or not prompt or len(prompt.encode()) > MAX_APPROVAL_PROMPT_BYTES:
+                    try:
+                        data = validate_approval_data({"prompt": frame.get("prompt")})
+                    except ValueError:
                         await websocket.send_json({"type": "error", "code": "invalid_approval", "message": "Prompt must be non-empty UTF-8 text up to 4096 bytes"})
                         continue
-                    event = _event(db, session.id, "approval_requested", {"prompt": prompt})
+                    event = _event(db, session.id, "approval_requested", data)
                     db.commit()
                     await manager.send_to_role(key, "controller", {"type": "event", "event": _event_response(event)})
                 else:
