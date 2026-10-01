@@ -368,13 +368,21 @@ async def append_worker_event(
     worker = _require_session_worker(db, session, agent_info["agent_name"])
     if req.kind == "session_adopted":
         _expire_stale_workers(db, relay_id)
-        db.refresh(worker)
-        db.refresh(session)
-        if worker.status != "online" or session.status != "detached":
+        # One conditional UPDATE so concurrent adoptions cannot both succeed.
+        adopted = db.query(HarnessSession).filter(
+            HarnessSession.id == session.id,
+            HarnessSession.status == "detached",
+            HarnessSession.worker_id.in_(
+                db.query(Worker.id).filter(Worker.id == worker.id, Worker.status == "online", Worker.revoked_at.is_(None))
+            ),
+        ).update(
+            {"status": "ready", "version": HarnessSession.version + 1, "updated_at": _now()},
+            synchronize_session=False,
+        )
+        if adopted != 1:
+            db.rollback()
             raise HTTPException(status_code=409, detail="Only a detached session of an online worker can be adopted")
-        session.status = "ready"
-        session.version += 1
-        session.updated_at = _now()
+        db.refresh(session)
     if req.kind in {"session_exited", "session_failed"}:
         session.status = "failed"
         session.version += 1

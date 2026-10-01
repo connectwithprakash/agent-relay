@@ -103,7 +103,8 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                         await manager.send_to_role(key, "worker", {"type": "event", "event": _event_response(event)})
                         continue
                     value = frame.get("input")
-                    if not isinstance(value, str) or not value or (utf8_size(value) or MAX_FRAME_TEXT_BYTES + 1) > MAX_FRAME_TEXT_BYTES:
+                    size = utf8_size(value) if isinstance(value, str) else None
+                    if not value or size is None or size > MAX_FRAME_TEXT_BYTES:
                         await websocket.send_json({"type": "error", "code": "invalid_input", "message": "Input must be non-empty UTF-8 text up to 64 KB"})
                         continue
                     event = _event(db, session.id, "input_requested", {"input": value})
@@ -113,7 +114,8 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                     await manager.send_to_role(key, "controller", payload, exclude=websocket)
                 elif role == "worker" and frame_type == "output":
                     value = frame.get("text")
-                    if not isinstance(value, str) or (utf8_size(value) or MAX_FRAME_TEXT_BYTES + 1) > MAX_FRAME_TEXT_BYTES:
+                    size = utf8_size(value) if isinstance(value, str) else None
+                    if size is None or size > MAX_FRAME_TEXT_BYTES:
                         await websocket.send_json({"type": "error", "code": "invalid_output", "message": "Output must be UTF-8 text up to 64 KB"})
                         continue
                     event = _event(db, session.id, "output", {"text": value})

@@ -332,3 +332,38 @@ def test_frame_with_non_string_type_gets_invalid_frame_and_stream_stays_open(cli
         for _ in range(2):
             ws.send_text('{"type":' + frame_type + '}')
             assert _receive_until(ws, "error")["code"] == "invalid_frame"
+
+
+def test_empty_output_text_is_still_accepted_and_stored(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+
+    with client.websocket_connect(_stream_path(relay, session_id), headers=_ws_headers(relay["token"])) as controller_ws:
+        with client.websocket_connect(_stream_path(relay, session_id), headers=_ws_headers(worker_token)) as worker_ws:
+            for ws in (controller_ws, worker_ws):
+                _receive_until(ws, "connected")
+            worker_ws.send_json({"type": "output", "text": ""})
+            assert _receive_until(controller_ws, "event", "output")["event"]["data"] == {"text": ""}
+
+    events = client.get(_events_url(relay, session_id), headers=_auth(relay["token"])).json()["events"]
+    assert any(e["kind"] == "output" and e["data"] == {"text": ""} for e in events)
+
+
+def test_concurrent_adoptions_bump_the_version_once(client, db_session):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    relay, worker_token, session_id = _ready_control_session(client)
+    version = _detach(db_session, session_id)
+    barrier = Barrier(2)
+
+    def adopt():
+        barrier.wait()
+        return _adopt(client, relay, worker_token, session_id).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = sorted(f.result() for f in [pool.submit(adopt), pool.submit(adopt)])
+
+    assert codes == [202, 409]
+    assert _session_state(db_session, session_id) == ("ready", version + 1)
+    adopted = [k for k in _event_kinds(client, relay, session_id) if k == "session_adopted"]
+    assert len(adopted) == 1
