@@ -1,6 +1,7 @@
 """Managed PTY adapter and worker-bridge tests."""
 
 import fcntl
+import json
 import struct
 import termios
 import time
@@ -393,3 +394,51 @@ def test_prompt_is_detected_when_words_are_placed_by_cursor_escapes():
     assert len(emitted) == 1
     assert " ".join(emitted[0].split()).startswith("Do you want to proceed?")
     assert emitted[0].endswith("(esc)")
+
+
+def test_stream_skips_replayed_input_the_polling_path_already_applied():
+    client = _FakeControlClient()
+    daemon = WorkerDaemon(client, "relay-1", "Personal Mac", ["fixture-shell"])
+    stream = _FakeStream([
+        '{"type":"event","event":{"sequence":1,"kind":"input_requested","data":{"input":"replayed\\n"}}}',
+        '{"type":"event","event":{"sequence":2,"kind":"input_requested","data":{"input":"fresh\\n"}}}',
+    ])
+    try:
+        daemon.start()
+        daemon.run_once()  # applies sequence 1 ("bridge test") and records the cursor
+        assert daemon._cursors["session-1"] == 1
+        daemon.stream_owned_session("session-1", max_frames=2, connection_factory=lambda url, subprotocols: stream)
+
+        seen = "".join(json.loads(frame).get("text", "") for frame in stream.sent)
+        deadline = time.monotonic() + 3.0
+        while "echo:fresh" not in seen and time.monotonic() < deadline:
+            seen += daemon._sessions["session-1"].read(timeout=0.1)
+        assert "echo:fresh" in seen
+        assert "echo:replayed" not in seen
+        assert daemon._cursors["session-1"] == 2
+    finally:
+        daemon.close()
+
+
+def test_run_once_flushes_remaining_output_before_reporting_exit():
+    class QuietClient(_FakeControlClient):
+        def get_session_events(self, relay_id, session_id, after_sequence=0):
+            return []
+
+    client = QuietClient()
+    daemon = WorkerDaemon(client, "relay-1", "Personal Mac", ["fixture-shell"])
+    try:
+        daemon.start()
+        daemon.run_once()
+        daemon._sessions["session-1"].write("last words\n\x04")  # echo the line, then end of input
+        deadline = time.monotonic() + 5.0
+        while "session_exited" not in [e[2] for e in client.output_events] and time.monotonic() < deadline:
+            daemon.run_once()
+            time.sleep(0.02)
+
+        kinds = [kind for _, _, kind, _ in client.output_events]
+        assert kinds[-1] == "session_exited"
+        text = "".join(data["text"] for _, _, kind, data in client.output_events if kind == "output")
+        assert "echo:last words" in text
+    finally:
+        daemon.close()

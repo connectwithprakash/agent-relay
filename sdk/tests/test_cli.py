@@ -215,3 +215,59 @@ def test_worker_setup_server_pairs_and_shuts_down(tmp_path):
 
         thread.join(timeout=3)
         assert not thread.is_alive()
+
+
+def _fake_claude(tmp_path):
+    executable = tmp_path / "claude"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o755)
+    return executable
+
+
+def test_worker_run_tmux_profile_requires_workdir_and_executable(tmp_path):
+    result = CliRunner().invoke(
+        main, ["worker-run", "--name", "Mac", "--profile", "claude-code-tmux", "--config-dir", str(tmp_path)]
+    )
+
+    assert result.exit_code != 0
+    assert "claude-code-tmux requires" in result.output
+
+
+def test_worker_run_tmux_profile_requires_tmux_binary(tmp_path):
+    executable = _fake_claude(tmp_path)
+    with patch("agent_relay.cli.shutil.which", return_value=None):
+        result = CliRunner().invoke(
+            main,
+            ["worker-run", "--name", "Mac", "--profile", "claude-code-tmux",
+             "--claude-workdir", str(tmp_path), "--claude-executable", str(executable),
+             "--config-dir", str(tmp_path)],
+        )
+
+    assert result.exit_code != 0
+    assert "tmux" in result.output
+
+
+def test_worker_run_tmux_profile_is_accepted_with_local_prerequisites(tmp_path):
+    executable = _fake_claude(tmp_path)
+    with patch("agent_relay.cli.shutil.which", return_value="/usr/bin/tmux"), \
+            patch("agent_relay.cli._serve_worker_setup") as serve:
+        result = CliRunner().invoke(
+            main,
+            ["worker-run", "--name", "Mac", "--profile", "claude-code-tmux",
+             "--claude-workdir", str(tmp_path), "--claude-executable", str(executable),
+             "--config-dir", str(tmp_path), "--setup-port", "18766"],
+        )
+
+    assert result.exit_code == 0
+    assert serve.call_args.args[1] == ("claude-code-tmux",)
+
+
+def test_session_start_accepts_the_tmux_profile(tmp_path):
+    with patch("agent_relay.cli._controller_client") as controller:
+        client = controller.return_value[1]
+        controller.return_value = ({"relay_id": "relay-1"}, client)
+        client.start_session.return_value = {"session_id": "s1", "status": "starting", "profile": "claude-code-tmux", "version": 1}
+        result = CliRunner().invoke(main, ["session-start", "worker-1", "claude-code-tmux"])
+
+    assert result.exit_code == 0, result.output
+    assert client.start_session.call_args.args[2] == "claude-code-tmux"
