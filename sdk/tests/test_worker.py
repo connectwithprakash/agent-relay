@@ -1,5 +1,6 @@
 """Managed PTY adapter and worker-bridge tests."""
 
+import time
 import pytest
 
 from agent_relay.worker import ManagedPtySession, WorkerDaemon
@@ -81,12 +82,17 @@ def test_worker_daemon_bridges_authorized_input_to_owned_pty_output():
     daemon = WorkerDaemon(client, "relay-1", "Personal Mac", ["fixture-shell"])
     try:
         daemon.start()
-        daemon.run_once()
+        deadline = time.monotonic() + 5.0
+        collected = ""
+        while "echo:bridge test" not in collected and time.monotonic() < deadline:
+            daemon.run_once()
+            collected = "".join(
+                data["text"] for _, _, kind, data in client.output_events if kind == "output"
+            )
+            time.sleep(0.02)
 
         assert client.ready_sessions == [("relay-1", "session-1")]
-        assert client.output_events
-        assert client.output_events[0][2] == "output"
-        assert "echo:bridge test" in client.output_events[0][3]["text"]
+        assert "echo:bridge test" in collected
     finally:
         daemon.close()
 

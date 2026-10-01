@@ -149,3 +149,69 @@ def test_status_command_no_config():
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["status"])
         assert result.exit_code != 0
+
+
+def test_worker_run_without_config_serves_local_setup(tmp_path):
+    """An unpaired worker prints the localhost setup URL instead of failing."""
+    with patch("agent_relay.cli._serve_worker_setup") as serve:
+        result = CliRunner().invoke(
+            main,
+            ["worker-run", "--name", "Mac", "--profile", "fixture-shell",
+             "--config-dir", str(tmp_path), "--setup-port", "18765"],
+        )
+
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:18765" in result.output
+    assert serve.call_args.args[0] == "Mac"
+    assert serve.call_args.args[4] == tmp_path
+    assert serve.call_args.args[5] == 18765
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def test_worker_setup_server_pairs_and_shuts_down(tmp_path):
+    """The setup page rejects bad input, then enrolls with a valid code and stops."""
+    from threading import Thread
+
+    import httpx
+
+    from agent_relay.cli import _serve_worker_setup
+
+    port = _free_port()
+    base = f"http://127.0.0.1:{port}"
+    with patch("agent_relay.cli._enroll_worker") as enroll:
+        thread = Thread(
+            target=_serve_worker_setup,
+            args=("Mac", ("fixture-shell",), None, None, tmp_path, port),
+            daemon=True,
+        )
+        thread.start()
+        for _ in range(50):
+            try:
+                page = httpx.get(base, timeout=1)
+                break
+            except httpx.ConnectError:
+                import time
+
+                time.sleep(0.05)
+        assert page.status_code == 200
+        assert "Pair this computer" in page.text
+        assert "fixture-shell" in page.text
+
+        bad = httpx.post(base, data={"invitation": "", "server": "ftp://x"}, timeout=1)
+        assert bad.status_code == 400
+        enroll.assert_not_called()
+
+        ok = httpx.post(base, data={"invitation": "inv-1", "server": "https://relay.example"}, timeout=1)
+        assert ok.status_code == 200
+        assert "Worker paired" in ok.text
+        enroll.assert_called_once_with("inv-1", "https://relay.example", tmp_path)
+
+        thread.join(timeout=3)
+        assert not thread.is_alive()
