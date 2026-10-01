@@ -201,3 +201,165 @@ def test_open_controller_stream_cannot_bypass_missing_control_lease(client):
         headers=_auth(relay["token"]),
     )
     assert not any(event["kind"] == "input_requested" for event in events.json()["events"])
+
+
+def _event_kinds(client, relay, session_id):
+    events = client.get(
+        f"/relays/{relay['relay_id']}/sessions/{session_id}/events",
+        headers=_auth(relay["token"]),
+    )
+    return [event["kind"] for event in events.json()["events"]]
+
+
+def test_controller_resize_is_stored_and_forwarded_to_worker(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+            _receive_until(controller_ws, "connected")
+            _receive_until(worker_ws, "connected")
+
+            controller_ws.send_json({"type": "resize", "cols": 120, "rows": 40})
+            delivered = _receive_until(worker_ws, "event", "resize_requested")
+            assert delivered["event"]["data"] == {"cols": 120, "rows": 40}
+
+    assert "resize_requested" in _event_kinds(client, relay, session_id)
+
+
+def test_resize_accepts_inclusive_bounds(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+            _receive_until(controller_ws, "connected")
+            _receive_until(worker_ws, "connected")
+            for cols, rows in ((20, 5), (500, 200)):
+                controller_ws.send_json({"type": "resize", "cols": cols, "rows": rows})
+                delivered = _receive_until(worker_ws, "event", "resize_requested")
+                assert delivered["event"]["data"] == {"cols": cols, "rows": rows}
+
+
+import pytest
+
+
+@pytest.mark.parametrize("frame", [
+    {"type": "resize", "cols": 19, "rows": 24},
+    {"type": "resize", "cols": 501, "rows": 24},
+    {"type": "resize", "cols": 80, "rows": 4},
+    {"type": "resize", "cols": 80, "rows": 201},
+    {"type": "resize", "cols": 80.5, "rows": 24},
+    {"type": "resize", "cols": "80", "rows": 24},
+    {"type": "resize", "cols": True, "rows": 24},
+    {"type": "resize", "cols": None, "rows": 24},
+    {"type": "resize", "cols": 80},
+    {"type": "resize", "rows": 24},
+])
+def test_resize_rejects_invalid_values_and_stores_nothing(client, frame):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        _receive_until(controller_ws, "connected")
+        controller_ws.send_json(frame)
+        error = _receive_until(controller_ws, "error")
+        assert error["code"] == "invalid_resize"
+
+    assert "resize_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_resize_requires_control_lease(client):
+    relay, session_id = _ready_session_without_lease(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        _receive_until(controller_ws, "connected")
+        controller_ws.send_json({"type": "resize", "cols": 80, "rows": 24})
+        error = _receive_until(controller_ws, "error")
+        assert error["code"] == "lease_required"
+
+    assert "resize_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_worker_cannot_send_resize_frame(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+        _receive_until(worker_ws, "connected")
+        worker_ws.send_json({"type": "resize", "cols": 80, "rows": 24})
+        error = _receive_until(worker_ws, "error")
+        assert error["code"] == "invalid_frame"
+
+    assert "resize_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_worker_approval_frame_is_stored_and_pushed_to_controller(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+            _receive_until(controller_ws, "connected")
+            _receive_until(worker_ws, "connected")
+
+            worker_ws.send_json({"type": "approval", "prompt": "Allow edit? 1. Yes 2. No"})
+            pushed = _receive_until(controller_ws, "event", "approval_requested")
+            assert pushed["event"]["data"] == {"prompt": "Allow edit? 1. Yes 2. No"}
+
+    assert "approval_requested" in _event_kinds(client, relay, session_id)
+
+
+@pytest.mark.parametrize("prompt", [None, 5, ["a"], "x" * 4097])
+def test_approval_rejects_invalid_prompt_and_stores_nothing(client, prompt):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+        _receive_until(worker_ws, "connected")
+        worker_ws.send_json({"type": "approval", "prompt": prompt})
+        error = _receive_until(worker_ws, "error")
+        assert error["code"] == "invalid_approval"
+
+    assert "approval_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_approval_prompt_limit_is_bytes_not_characters(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(worker_token)) as worker_ws:
+        _receive_until(worker_ws, "connected")
+        worker_ws.send_json({"type": "approval", "prompt": "é" * 2049})
+        error = _receive_until(worker_ws, "error")
+        assert error["code"] == "invalid_approval"
+
+
+def test_controller_cannot_send_approval_frame(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        _receive_until(controller_ws, "connected")
+        controller_ws.send_json({"type": "approval", "prompt": "spoofed"})
+        error = _receive_until(controller_ws, "error")
+        assert error["code"] == "invalid_frame"
+
+    assert "approval_requested" not in _event_kinds(client, relay, session_id)
+
+
+def test_http_approval_event_is_pushed_live_to_controller(client):
+    relay, worker_token, session_id = _ready_control_session(client)
+    path = f"/relays/{relay['relay_id']}/sessions/{session_id}/stream?cursor=0"
+
+    with client.websocket_connect(path, headers=_ws_headers(relay["token"])) as controller_ws:
+        _receive_until(controller_ws, "connected")
+        posted = client.post(
+            f"/relays/{relay['relay_id']}/sessions/{session_id}/events",
+            json={"kind": "approval_requested", "data": {"prompt": "Proceed?"}},
+            headers=_auth(worker_token),
+        )
+        assert posted.status_code == 202
+        pushed = _receive_until(controller_ws, "event", "approval_requested")
+        assert pushed["event"]["data"] == {"prompt": "Proceed?"}

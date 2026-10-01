@@ -11,6 +11,14 @@ from .control import _as_utc, _event, _event_response, _expire_stale_workers, _n
 
 router = APIRouter()
 
+RESIZE_COLS = (20, 500)
+RESIZE_ROWS = (5, 200)
+MAX_APPROVAL_PROMPT_BYTES = 4096
+
+
+def _is_bounded_int(value, bounds) -> bool:
+    return type(value) is int and bounds[0] <= value <= bounds[1]
+
 
 def _token_from_protocol(websocket: WebSocket) -> Optional[str]:
     for protocol in (websocket.headers.get("sec-websocket-protocol") or "").split(","):
@@ -66,7 +74,7 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
             frame = await websocket.receive_json()
             try:
                 frame_type = frame.get("type")
-                if role == "controller" and frame_type == "input":
+                if role == "controller" and frame_type in {"input", "resize"}:
                     _expire_stale_workers(db, relay_id)
                     # The stream holds one DB session for its lifetime; rows loaded
                     # at connect are identity-mapped and go stale when leases change
@@ -80,6 +88,15 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                     lease = db.get(ControlLease, session.id)
                     if not lease or lease.controller_agent != agent_token.agent_name or not lease.expires_at or _as_utc(lease.expires_at) <= _now():
                         await websocket.send_json({"type": "error", "code": "lease_required", "message": "An active control lease is required"})
+                        continue
+                    if frame_type == "resize":
+                        cols, rows = frame.get("cols"), frame.get("rows")
+                        if not _is_bounded_int(cols, RESIZE_COLS) or not _is_bounded_int(rows, RESIZE_ROWS):
+                            await websocket.send_json({"type": "error", "code": "invalid_resize", "message": "cols must be an integer 20..500 and rows an integer 5..200"})
+                            continue
+                        event = _event(db, session.id, "resize_requested", {"cols": cols, "rows": rows})
+                        db.commit()
+                        await manager.send_to_role(key, "worker", {"type": "event", "event": _event_response(event)})
                         continue
                     value = frame.get("input")
                     if not isinstance(value, str) or not value or len(value.encode()) > 65536:
@@ -98,6 +115,14 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                     db.commit()
                     payload = {"type": "event", "event": _event_response(event)}
                     await manager.send_to_role(key, "controller", payload)
+                elif role == "worker" and frame_type == "approval":
+                    prompt = frame.get("prompt")
+                    if not isinstance(prompt, str) or not prompt or len(prompt.encode()) > MAX_APPROVAL_PROMPT_BYTES:
+                        await websocket.send_json({"type": "error", "code": "invalid_approval", "message": "Prompt must be non-empty UTF-8 text up to 4096 bytes"})
+                        continue
+                    event = _event(db, session.id, "approval_requested", {"prompt": prompt})
+                    db.commit()
+                    await manager.send_to_role(key, "controller", {"type": "event", "event": _event_response(event)})
                 else:
                     await websocket.send_json({"type": "error", "code": "invalid_frame", "message": "Frame is not allowed for this stream role"})
             finally:
