@@ -396,7 +396,7 @@ async def append_worker_event(
     db.commit()
     db.refresh(event)
     response = {"event": _event_response(event), "version": session.version}
-    if req.kind in {"output", "approval_requested", "session_adopted"}:
+    if req.kind in {"output", "approval_requested", "session_adopted", "session_exited", "session_failed"}:
         await manager.send_to_role(
             (relay_id, session_id),
             "controller",

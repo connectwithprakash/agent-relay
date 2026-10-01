@@ -79,3 +79,5 @@ agent-relay worker-revoke WORKER_ID --config-dir /Users/bodhi/agent-relay-servic
 Use `worker-list` before requesting a session. Only `online` workers may start or accept input. Revocation is permanent for that worker record.
 
 Controllers receive other controllers' input events live over the stream, and terminal input may contain secrets such as passwords typed at a prompt. Controller tokens are trusted with that input; issue them accordingly.
+
+When the worker posts `session_exited` or `session_failed`, the server marks the session failed, releases the lease and pushes the event live to the session's connected controllers, so they learn of the exit without reconnecting.
