@@ -11,6 +11,7 @@ Run it with an interpreter that has the backend and SDK dependencies installed:
     backend/.venv/bin/python scripts/smoke_control.py
 """
 import json
+import shutil
 import socket
 import subprocess
 import sys
@@ -168,7 +169,6 @@ def main() -> int:
         print("input and output round trip ok")
 
         stream.send({"type": "resize", "cols": 101, "rows": 31})
-        wait_until("resize event", lambda: stream.of_kind("resize_requested"))
         stream.send({"type": "input", "input": "size\n"})
         wait_until("PTY size report", lambda: "size:101x31" in stream.output_text())
         print("resize applied to the PTY (101x31)")
@@ -176,6 +176,9 @@ def main() -> int:
         stream.send({"type": "resize", "cols": 10, "rows": 31})
         wait_until("invalid_resize error", lambda: any(e.get("code") == "invalid_resize" for e in stream.errors))
         print("out-of-range resize rejected")
+
+        if stream.output_text().count("echo:hello smoke") != 1:
+            raise SmokeFailure("input was delivered to the PTY more than once")
 
         stream.send({"type": "input", "input": "approval\n"})
         approvals = wait_until("approval event", lambda: stream.of_kind("approval_requested"))
@@ -188,6 +191,18 @@ def main() -> int:
         stream.send({"type": "input", "input": "1\n"})
         wait_until("answer reaching the PTY", lambda: "echo:1" in stream.output_text())
         print("approval round trip ok")
+
+        controller.release_session(relay_id, session_id)
+        stream.send({"type": "input", "input": "without lease\n"})
+        wait_until("lease_required error", lambda: any(e.get("code") == "lease_required" for e in stream.errors))
+        time.sleep(0.3)
+        if "echo:without lease" in stream.output_text():
+            raise SmokeFailure("input without a lease reached the PTY")
+        current = next(s for s in controller.list_sessions(relay_id) if s["session_id"] == session_id)
+        controller.claim_session(relay_id, session_id, current["version"], 60)
+        stream.send({"type": "input", "input": "after reclaim\n"})
+        wait_until("input after a new lease", lambda: "echo:after reclaim" in stream.output_text())
+        print("lease release and re-claim ok")
 
         print("SMOKE PASSED")
         return 0
@@ -210,6 +225,7 @@ def main() -> int:
             backend.wait(timeout=5)
         except subprocess.TimeoutExpired:
             backend.kill()
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

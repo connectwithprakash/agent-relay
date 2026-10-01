@@ -547,3 +547,26 @@ def test_fixture_shell_prints_a_detectable_permission_prompt_on_request():
         assert prompts[-1].startswith("Do you want to proceed?")
     finally:
         session.close()
+
+
+def test_read_on_a_closed_session_returns_nothing_instead_of_raising():
+    session = ManagedPtySession.start("fixture-shell")
+    session.close()
+
+    assert session.read(timeout=0.05) == ""
+    assert session.closed
+
+
+def test_stream_ends_cleanly_when_its_session_is_closed_underneath_it():
+    class IdleStream(_FakeStream):
+        def recv(self, timeout):
+            raise TimeoutError
+
+    daemon = WorkerDaemon(_FakeControlClient(), "relay-1", "Personal Mac", ["fixture-shell"])
+    try:
+        daemon.start()
+        daemon.run_once()
+        daemon._sessions["session-1"].close()
+        daemon.stream_owned_session("session-1", connection_factory=lambda url, subprotocols: IdleStream([]))
+    finally:
+        daemon.close()

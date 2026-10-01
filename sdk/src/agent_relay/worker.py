@@ -175,19 +175,24 @@ class ManagedPtySession:
             raise RuntimeError("Managed PTY session is not running")
         fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+    @property
+    def closed(self) -> bool:
+        """True once close() has released the PTY."""
+        return self.master_fd < 0
+
     def read(self, timeout: float = 0.0) -> str:
         """Read currently available terminal output, waiting at most timeout seconds."""
         deadline = time.monotonic() + timeout
         chunks: list[bytes] = []
         while True:
             remaining = max(0.0, deadline - time.monotonic())
-            readable, _, _ = select.select([self.master_fd], [], [], remaining)
-            if not readable:
-                break
             try:
+                readable, _, _ = select.select([self.master_fd], [], [], remaining)
+                if not readable:
+                    break
                 chunk = os.read(self.master_fd, 65536)
-            except OSError:
-                break
+            except (ValueError, OSError):
+                break  # closed underneath a concurrent reader
             if not chunk:
                 break
             chunks.append(chunk)
@@ -385,6 +390,11 @@ class ManagedTmuxSession:
     def display(self, template: str) -> str:
         """Expand a tmux format string against this session's pane."""
         return self._run("display-message", "-p", "-t", self._target, template).stdout.strip()
+
+    @property
+    def closed(self) -> bool:
+        """True once the session was closed or detached by this worker."""
+        return self._ended
 
     def poll(self) -> int | None:
         """Return the command's exit code once it has ended, else None."""
@@ -650,7 +660,7 @@ class WorkerDaemon:
         pty_session = self._sessions[session_id]
         try:
             with connection_factory(stream_url, subprotocols=[f"token-{token}"]) as websocket:
-                while max_frames is None or processed < max_frames:
+                while (max_frames is None or processed < max_frames) and not pty_session.closed:
                     try:
                         raw = websocket.recv(timeout=0.05)
                     except TimeoutError:
