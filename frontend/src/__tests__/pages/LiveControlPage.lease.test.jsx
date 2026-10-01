@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -107,6 +107,68 @@ describe('LiveControlPage lease errors', () => {
     );
     await screen.findByText('session failed');
     expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
+  });
+
+  describe('lease countdown', () => {
+    const naiveUtc = (offsetMs) => new Date(Date.now() + offsetMs).toISOString().replace('Z', '');
+    const mount = (overrides) => {
+      const current = { ...session, ...overrides };
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ sessions: [current] }),
+      })));
+      render(
+        <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+          <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+        </MemoryRouter>,
+      );
+    };
+
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] }));
+    afterEach(() => vi.useRealTimers());
+
+    it('shows the remaining lease time and counts down', async () => {
+      mount({ status: 'controlled', lease_expires_at: naiveUtc(90_000) });
+      expect(await screen.findByText('Lease 1:30')).toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(10_000); });
+      expect(screen.getByText('Lease 1:20')).toBeInTheDocument();
+    });
+
+    it('drops control once when the lease runs out and does not loop', async () => {
+      mount({ status: 'controlled', lease_expires_at: naiveUtc(3_000) });
+      await screen.findByText('Lease 0:03');
+      const callsBefore = fetch.mock.calls.length;
+
+      await act(async () => { vi.advanceTimersByTime(3_000); });
+
+      expect(await screen.findByRole('button', { name: 'Take control' })).toBeInTheDocument();
+      expect(screen.queryByText(/^Lease /)).toBeNull();
+      expect(fetch).toHaveBeenCalledTimes(callsBefore + 1);
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      expect(fetch).toHaveBeenCalledTimes(callsBefore + 1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('shows no countdown and runs no timer for a view-only tab', async () => {
+      mount({ status: 'ready', controller_agent: 'someone-else', lease_expires_at: naiveUtc(90_000) });
+      await screen.findByText('worker online');
+      expect(screen.queryByText(/^Lease /)).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it.each(['failed', 'detached'])('shows no countdown for a %s session', async (status) => {
+      mount({ status, lease_expires_at: naiveUtc(90_000) });
+      await screen.findByText(`session ${status}`);
+      expect(screen.queryByText(/^Lease /)).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('stops the timer on unmount', async () => {
+      mount({ status: 'controlled', lease_expires_at: naiveUtc(90_000) });
+      await screen.findByText('Lease 1:30');
+      cleanup();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   describe('naive UTC lease timestamps', () => {
