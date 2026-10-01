@@ -1,5 +1,5 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../components/TerminalViewport', () => ({
@@ -28,6 +28,8 @@ describe('LiveControlPage lease renewal', () => {
   let listed;
   let renewCalls;
   let renewHandler;
+  let claimCalls;
+  let claimResponse;
 
   const renewedResponse = (version) => () => ({
     ok: true,
@@ -46,14 +48,20 @@ describe('LiveControlPage lease renewal', () => {
     }
     vi.stubGlobal('WebSocket', FakeWebSocket);
     renewCalls = [];
+    claimCalls = [];
+    claimResponse = () => held({ version: 6, lease_expires_at: naiveUtc(Date.now() + 60_000) });
     renewHandler = renewedResponse(4);
     listed = held();
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url, options) => {
       if (String(url).endsWith('/lease/renew')) {
-        renewCalls.push({ at: Date.now(), body: JSON.parse(options.body) });
+        renewCalls.push({ at: Date.now(), url: String(url), body: JSON.parse(options.body) });
         const outcome = renewHandler(renewCalls.length);
         if (outcome instanceof Error) throw outcome;
         return outcome;
+      }
+      if (String(url).endsWith('/claim')) {
+        claimCalls.push(JSON.parse(options.body));
+        return { ok: true, json: async () => claimResponse() };
       }
       return { ok: true, json: async () => ({ sessions: [listed] }) };
     }));
@@ -194,5 +202,67 @@ describe('LiveControlPage lease renewal', () => {
     });
     await flush();
     expect(fetch.mock.calls.length).toBe(before);
+  });
+
+  it('renews the new lease after a claim that follows a failed renewal', async () => {
+    const error = Object.assign(new Error('refused'), { status: 409 });
+    renewHandler = (n) => (n === 1
+      ? { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ detail: error.message }) }
+      : renewedResponse(7)());
+    listed = held({ version: 3 });
+    await open();
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+    await advance(40_000);
+    listed = held({ version: 5, status: 'ready', controller_agent: null, lease_expires_at: null });
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+    await flush();
+    expect(claimCalls).toHaveLength(1);
+    await advance(31_000);
+
+    expect(renewCalls).toHaveLength(2);
+    expect(renewCalls[1].body.expected_version).toBe(6);
+  });
+
+  it('does not renew the old session after the route switches to another session', async () => {
+    function Switch() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate('/relay/relay-1/sessions/session-2/live')}>go to second</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+        <Switch />
+        <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    await flush();
+    act(() => sockets[0].onopen());
+    await flush();
+    await advance(10_000);
+
+    listed = held({ session_id: 'session-2', controller_agent: 'someone-else' });
+    fireEvent.click(screen.getByText('go to second'));
+    await flush();
+    await advance(120_000);
+
+    expect(renewCalls).toHaveLength(0);
+  });
+
+  it('keeps the renewed version when a stale session list arrives afterwards', async () => {
+    renewHandler = (n) => renewedResponse(3 + n)();
+    await open();
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+
+    listed = held({ version: 3 });
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: { controller_agent: 'browser-controller' } } }) });
+    });
+    await flush();
+    await advance(30_000);
+
+    expect(renewCalls.map((call) => call.body.expected_version)).toEqual([3, 4]);
   });
 });
