@@ -6,9 +6,9 @@ import os
 import re
 import select
 import shutil
+import struct
 import subprocess
 import sys
-import struct
 import termios
 import time
 import json
@@ -30,18 +30,23 @@ MIN_ROWS, MAX_ROWS = 5, 200
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
+_CURSOR_COLUMN_PATTERN = re.compile(r"\x1b\[\d*[GC]")
 _ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _APPROVAL_PATTERN = re.compile(
-    r"Do you want to [^\n?]*\?"
+    r"Do\s+you\s+want\s+to\s[^\n?]*\?"
     r"[^\n]*\n(?:[^\n]*\n){0,8}?"
     r"[^\n]*\b1\.\s*Yes"
-    r"[\s\S]{0,400}?\b\d\.\s*No[^\n]*"
+    r"[\s\S]{0,400}?\b\d\.\s*No[^\n]*\n"
 )
 
 
 def _clean_terminal_text(text: str) -> str:
-    """Drop ANSI escape sequences and carriage returns so patterns match plain lines."""
-    return _ANSI_PATTERN.sub("", text).replace("\r\n", "\n").replace("\r", "")
+    """Drop ANSI escapes and carriage returns so patterns match plain lines.
+
+    Claude Code positions words with cursor-column moves instead of spaces, so those
+    moves become a single space before the remaining escapes are removed.
+    """
+    return _ANSI_PATTERN.sub("", _CURSOR_COLUMN_PATTERN.sub(" ", text)).replace("\r\n", "\n").replace("\r", "")
 
 
 def extract_approval_prompt(text: str) -> tuple[str, int] | None:
@@ -186,10 +191,10 @@ class WorkerDaemon:
         self._approval_detectors: dict[str, ApprovalDetector] = {}
 
     def _apply_resize(self, pty_session: ManagedPtySession, data: dict) -> None:
-        """Apply a resize event; a malformed size is reported locally and skipped."""
+        """Apply a resize event as best effort; a bad size or dead session is logged and skipped."""
         try:
             pty_session.resize(data.get("cols"), data.get("rows"))
-        except ValueError as error:
+        except (ValueError, RuntimeError, OSError) as error:
             print(f"Ignoring invalid resize request: {error}", file=sys.stderr)
 
     def start(self) -> str:
@@ -282,23 +287,26 @@ class WorkerDaemon:
         stream_url = urlunparse((scheme, parsed.netloc, f"/relays/{self.relay_id}/sessions/{session_id}/stream", "", "cursor=0", ""))
         processed = 0
         pty_session = self._sessions[session_id]
-        with connection_factory(stream_url, subprotocols=[f"token-{token}"]) as websocket:
-            while max_frames is None or processed < max_frames:
-                try:
-                    raw = websocket.recv(timeout=0.05)
-                except TimeoutError:
-                    raw = None
-                if raw:
-                    frame = json.loads(raw)
-                    event = frame.get("event", {}) if frame.get("type") == "event" else {}
-                    if event.get("kind") == "input_requested":
-                        pty_session.write(event["data"]["input"])
-                    elif event.get("kind") == "resize_requested":
-                        self._apply_resize(pty_session, event["data"])
-                    processed += 1
-                output = pty_session.read(timeout=0.05 if raw else 0.0)
-                if output:
-                    websocket.send(json.dumps({"type": "output", "text": output}))
-                    detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
-                    for prompt in detector.feed(output):
-                        websocket.send(json.dumps({"type": "approval", "prompt": prompt}))
+        try:
+            with connection_factory(stream_url, subprotocols=[f"token-{token}"]) as websocket:
+                while max_frames is None or processed < max_frames:
+                    try:
+                        raw = websocket.recv(timeout=0.05)
+                    except TimeoutError:
+                        raw = None
+                    if raw:
+                        frame = json.loads(raw)
+                        event = frame.get("event", {}) if frame.get("type") == "event" else {}
+                        if event.get("kind") == "input_requested":
+                            pty_session.write(event["data"]["input"])
+                        elif event.get("kind") == "resize_requested":
+                            self._apply_resize(pty_session, event["data"])
+                        processed += 1
+                    output = pty_session.read(timeout=0.05 if raw else 0.0)
+                    if output:
+                        websocket.send(json.dumps({"type": "output", "text": output}))
+                        detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
+                        for prompt in detector.feed(output):
+                            websocket.send(json.dumps({"type": "approval", "prompt": prompt}))
+        finally:
+            self._approval_detectors.pop(session_id, None)

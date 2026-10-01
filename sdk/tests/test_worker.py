@@ -301,3 +301,95 @@ def test_stream_applies_resize_and_sends_one_approval_frame(monkeypatch):
         assert "".join(f["text"] for f in frames if f["type"] == "output") == PROMPT + "tail\n"
     finally:
         daemon.close()
+
+
+def test_detector_waits_for_the_last_option_line_to_finish():
+    split = PROMPT.index("3. No, and tel") + len("3. No, and tel")
+    detector = ApprovalDetector()
+
+    assert detector.feed(PROMPT[:split]) == []
+    emitted = detector.feed(PROMPT[split:])
+
+    assert len(emitted) == 1
+    assert emitted[0].endswith("(esc)")
+    assert detector.feed("later output\n") == []
+
+
+@pytest.mark.parametrize("cut", range(1, len(PROMPT)))
+def test_detector_emits_one_complete_prompt_for_any_split_point(cut):
+    detector = ApprovalDetector()
+    emitted = detector.feed(PROMPT[:cut]) + detector.feed(PROMPT[cut:])
+
+    assert len(emitted) == 1
+    assert emitted[0].endswith("(esc)")
+
+
+def test_prompt_cap_never_splits_a_multibyte_character():
+    prompt_text = "Do you want to edit " + "\u00e9" * 3000 + "?\n1. Yes\n2. No\n"
+    prompt, _ = extract_approval_prompt(prompt_text)
+
+    assert len(prompt.encode()) <= 4096
+    assert prompt.encode().decode() == prompt
+    assert "\ufffd" not in prompt
+
+
+def test_apply_resize_is_best_effort_for_an_exited_pty():
+    session = ManagedPtySession.start("fixture-shell")
+    session.close()
+    daemon = WorkerDaemon(_FakeControlClient(), "relay-1", "Personal Mac", ["fixture-shell"])
+
+    daemon._apply_resize(session, {"cols": 80, "rows": 24})
+
+
+def test_stream_releases_its_approval_detector_when_it_ends(monkeypatch):
+    _scripted_reads(monkeypatch, ["", PROMPT[:30]])
+    daemon = WorkerDaemon(_FakeControlClient(), "relay-1", "Personal Mac", ["fixture-shell"])
+    stream = _FakeStream(['{"type":"connected"}'])
+    try:
+        daemon.start()
+        daemon.run_once()
+        daemon.stream_owned_session("session-1", max_frames=1, connection_factory=lambda url, subprotocols: stream)
+        assert "session-1" not in daemon._approval_detectors
+    finally:
+        daemon.close()
+
+
+# Excerpt of raw bytes captured from a real Claude Code startup dialog through a PTY.
+# Claude Code separates words with cursor-column escapes instead of spaces.
+REAL_DIALOG_BYTES = (
+    "\x1b[2GQuick\x1b[8Gsafety\x1b[15Gcheck:\x1b[22GIs\x1b[25Gthis\x1b[30Ga\x1b[32Gproject"
+    "\x1b[40Gyou\x1b[44Gcreated\x1b[52Gor\x1b[55Gone\x1b[59Gyou\x1b[63Gtrust?\r\r\n"
+)
+
+
+def _cursor_positioned(text):
+    """Re-render plain text the way Claude Code does: words placed by column escapes."""
+    rendered = []
+    for line in text.splitlines():
+        column = 2
+        out = ""
+        for word in line.split(" "):
+            out += f"\x1b[{column}G{word}"
+            column += len(word) + 1
+        rendered.append(out)
+    return "\r\r\n".join(rendered) + "\r\r\n"
+
+
+def test_cursor_column_escapes_become_word_separators():
+    from agent_relay.worker import _clean_terminal_text
+
+    cleaned = _clean_terminal_text(REAL_DIALOG_BYTES)
+
+    assert "Quick safety check: Is this a project you created or one you trust?" in " ".join(cleaned.split())
+
+
+def test_prompt_is_detected_when_words_are_placed_by_cursor_escapes():
+    rendered = _cursor_positioned(PROMPT)
+    detector = ApprovalDetector()
+    cut = len(rendered) // 2
+
+    emitted = detector.feed(rendered[:cut]) + detector.feed(rendered[cut:])
+
+    assert len(emitted) == 1
+    assert " ".join(emitted[0].split()).startswith("Do you want to proceed?")
+    assert emitted[0].endswith("(esc)")
