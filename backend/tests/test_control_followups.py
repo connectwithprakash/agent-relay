@@ -319,3 +319,16 @@ def test_http_event_with_lone_surrogate_is_rejected_with_422(client, kind, data)
 
     assert response.status_code == 422
     assert kind not in _event_kinds(client, relay, session_id)
+
+
+@pytest.mark.parametrize("role", ["controller", "worker"])
+@pytest.mark.parametrize("frame_type", ["[]", "{}", "null", "5", "true", "1.5"])
+def test_frame_with_non_string_type_gets_invalid_frame_and_stream_stays_open(client, role, frame_type):
+    relay, worker_token, session_id = _ready_control_session(client)
+    token = relay["token"] if role == "controller" else worker_token
+
+    with client.websocket_connect(_stream_path(relay, session_id), headers=_ws_headers(token)) as ws:
+        _receive_until(ws, "connected")
+        for _ in range(2):
+            ws.send_text('{"type":' + frame_type + '}')
+            assert _receive_until(ws, "error")["code"] == "invalid_frame"

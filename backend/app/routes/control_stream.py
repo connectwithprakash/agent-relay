@@ -74,10 +74,10 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
         while True:
             frame = await websocket.receive_json()
             try:
-                if not isinstance(frame, dict):
-                    await websocket.send_json({"type": "error", "code": "invalid_frame", "message": "Frame must be a JSON object"})
+                if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
+                    await websocket.send_json({"type": "error", "code": "invalid_frame", "message": "Frame must be a JSON object with a string type"})
                     continue
-                frame_type = frame.get("type")
+                frame_type = frame["type"]
                 if role == "controller" and frame_type in {"input", "resize"}:
                     _expire_stale_workers(db, relay_id)
                     # The stream holds one DB session for its lifetime; rows loaded
