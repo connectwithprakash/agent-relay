@@ -34,11 +34,14 @@ export function useControlStream({ url, token, onEvent }) {
     return () => socketRef.current?.close();
   }, [connect]);
 
-  const sendInput = useCallback((input) => {
+  const sendFrame = useCallback((frame) => {
     if (socketRef.current?.readyState !== WebSocket.OPEN) return false;
-    socketRef.current.send(JSON.stringify({ type: 'input', input }));
+    socketRef.current.send(JSON.stringify(frame));
     return true;
   }, []);
 
-  return { status, sendInput, reconnect: connect };
+  const sendInput = useCallback((input) => sendFrame({ type: 'input', input }), [sendFrame]);
+  const sendResize = useCallback((cols, rows) => sendFrame({ type: 'resize', cols, rows }), [sendFrame]);
+
+  return { status, sendInput, sendResize, reconnect: connect };
 }
