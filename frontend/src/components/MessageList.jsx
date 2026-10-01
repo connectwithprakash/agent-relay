@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import AgentAvatar, { getAgentBubbleColor } from './AgentAvatar';
 import EmptyState from './EmptyState';
+import { parseServerTimestamp } from '../utils/time';
 
 export default function MessageList({ messages, currentAgent }) {
   const messagesEndRef = useRef(null);
@@ -14,7 +15,7 @@ export default function MessageList({ messages, currentAgent }) {
   }, [messages]);
 
   const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('en-US', {
+    return new Date(parseServerTimestamp(timestamp)).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
     });

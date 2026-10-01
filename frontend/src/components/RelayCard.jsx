@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import AgentAvatar from './AgentAvatar';
+import { parseServerTimestamp } from '../utils/time';
 
 export default function RelayCard({ relay }) {
   const navigate = useNavigate();
@@ -11,7 +12,7 @@ export default function RelayCard({ relay }) {
 
   const formatDate = (timestamp) => {
     if (!timestamp) return 'Unknown';
-    return new Date(timestamp).toLocaleDateString('en-US', {
+    return new Date(parseServerTimestamp(timestamp)).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
