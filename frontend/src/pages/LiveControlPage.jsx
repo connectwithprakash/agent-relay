@@ -158,9 +158,9 @@ function LiveControlSession() {
     const attempt = async (isRetry) => {
       try {
         const renewed = await renewLease(relayId, sessionId, { expectedVersion: sessionRef.current.version, leaseSeconds: LEASE_SECONDS });
-        // A response that outlived this effect (released, session switched) or that is older
-        // than what the page already adopted must not overwrite newer state.
-        if (cancelled) return;
+        // The effect may have been torn down while this request was in flight (worker or
+        // stream flapping). The response is still real server state, so adopt it unless the
+        // page has already moved to a newer version (release, refetch, another tab).
         setSession((current) => (current && renewed.version > current.version
           ? { ...renewed, worker_status: current.worker_status }
           : current));

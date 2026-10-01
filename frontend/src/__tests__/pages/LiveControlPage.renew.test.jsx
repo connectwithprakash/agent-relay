@@ -382,4 +382,31 @@ describe('LiveControlPage lease renewal', () => {
 
     expect(screen.getByText(/^Lease 0:2\d$/)).toBeInTheDocument();
   });
+
+  it('adopts a renew response that lands after the worker flapped during the request, without losing the lease', async () => {
+    let resolveRenew;
+    const pending = new Promise((resolve) => { resolveRenew = resolve; });
+    renewHandler = () => pending;
+    await open();
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+    expect(screen.getByText(/^Lease 0:2\d$/)).toBeInTheDocument();
+
+    // worker_unavailable flips the badge offline (the renewal effect is torn down) and
+    // the refetch brings the worker back online with the same, not yet renewed, lease.
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'error', code: 'worker_unavailable', message: 'Worker is unavailable' }) });
+    });
+    await flush();
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+
+    await act(async () => { resolveRenew(renewedResponse(4)()); await pending; });
+    await flush();
+
+    expect(screen.getByText(/^Lease (0:5\d|1:00)$/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Take control' })).toBeNull();
+    await advance(30_000);
+    expect(renewCalls[renewCalls.length - 1].body.expected_version).toBe(4);
+  });
 });
