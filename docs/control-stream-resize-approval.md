@@ -67,3 +67,7 @@ A tmux-backed session can outlive its worker process. When the worker restarts a
 ### Input hardening
 
 Strings containing lone surrogates must be rejected with `invalid_input` / `invalid_output` on the input and output paths instead of ending the stream (the `len(value.encode())` calls in `control_stream.py`).
+
+### Live exit events
+
+`session_exited` and `session_failed` posted by the worker over HTTP are stored as before (status `failed`, version incremented, lease released) and also pushed live to the session's controllers as normal `event` frames, keyed by relay and session.
