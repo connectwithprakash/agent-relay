@@ -34,7 +34,7 @@ def test_unknown_profile_is_rejected_without_starting_a_process():
 
 
 def test_claude_profile_fails_closed_when_executable_is_missing(monkeypatch):
-    monkeypatch.setattr("agent_relay.worker.shutil.which", lambda name: None)
+    monkeypatch.setattr("agent_relay.worker_common.shutil.which", lambda name: None)
 
     with pytest.raises(RuntimeError, match="not installed"):
         ManagedPtySession.start("claude-code", "/tmp")
@@ -568,5 +568,86 @@ def test_stream_ends_cleanly_when_its_session_is_closed_underneath_it():
         daemon.run_once()
         daemon._sessions["session-1"].close()
         daemon.stream_owned_session("session-1", connection_factory=lambda url, subprotocols: IdleStream([]))
+    finally:
+        daemon.close()
+
+
+def _reconnect_daemon():
+    daemon = WorkerDaemon(_FakeControlClient(), "relay-1", "Personal Mac", ["fixture-shell"])
+    daemon.start()
+    daemon.run_once()
+    return daemon
+
+
+def _factory(outcomes):
+    """Return a connection factory that raises or yields streams from a scripted list."""
+    attempts = []
+
+    def connect(url, subprotocols):
+        attempts.append(url)
+        outcome = outcomes[len(attempts) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    connect.attempts = attempts
+    return connect
+
+
+def test_run_stream_with_reconnect_retries_dropped_connections_with_backoff():
+    from websockets.exceptions import ConnectionClosedError
+
+    daemon = _reconnect_daemon()
+    sleeps = []
+    stream = _FakeStream(['{"type":"event","event":{"sequence":9,"kind":"input_requested","data":{"input":"after drop\\n"}}}'])
+    factory = _factory([ConnectionClosedError(None, None), ConnectionRefusedError("down"), stream])
+    try:
+        daemon.run_stream_with_reconnect(
+            "session-1", sleep=sleeps.append, connection_factory=factory, max_frames=1
+        )
+        assert len(factory.attempts) == 3
+        assert sleeps == [1.0, 2.0]
+    finally:
+        daemon.close()
+
+
+def test_run_stream_with_reconnect_gives_up_after_the_bounded_attempts():
+    from websockets.exceptions import ConnectionClosedError
+
+    daemon = _reconnect_daemon()
+    sleeps = []
+    factory = _factory([ConnectionClosedError(None, None)] * 3)
+    try:
+        with pytest.raises(ConnectionClosedError):
+            daemon.run_stream_with_reconnect(
+                "session-1", max_attempts=3, sleep=sleeps.append, connection_factory=factory
+            )
+        assert len(factory.attempts) == 3
+        assert sleeps == [1.0, 2.0]
+    finally:
+        daemon.close()
+
+
+def test_run_stream_with_reconnect_does_not_retry_programming_errors():
+    daemon = _reconnect_daemon()
+    factory = _factory([ValueError("bad frame")])
+    try:
+        with pytest.raises(ValueError):
+            daemon.run_stream_with_reconnect("session-1", sleep=lambda s: None, connection_factory=factory)
+        assert len(factory.attempts) == 1
+    finally:
+        daemon.close()
+
+
+def test_run_stream_with_reconnect_stops_once_the_session_is_closed():
+    from websockets.exceptions import ConnectionClosedError
+
+    daemon = _reconnect_daemon()
+    factory = _factory([ConnectionClosedError(None, None)] * 5)
+    try:
+        daemon._sessions["session-1"].close()
+        with pytest.raises(ConnectionClosedError):
+            daemon.run_stream_with_reconnect("session-1", sleep=lambda s: None, connection_factory=factory)
+        assert len(factory.attempts) == 1
     finally:
         daemon.close()

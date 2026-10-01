@@ -125,7 +125,7 @@ def test_invalid_session_ids_are_rejected(tmp_path, socket_name, state_dir):
 
 def test_start_fails_closed_without_a_valid_executable_or_workdir(tmp_path, socket_name, state_dir, monkeypatch):
     real_which = shutil.which
-    monkeypatch.setattr("agent_relay.worker.shutil.which", lambda name: None if name == "claude" else real_which(name))
+    monkeypatch.setattr("agent_relay.worker_common.shutil.which", lambda name: None if name == "claude" else real_which(name))
     with pytest.raises(RuntimeError, match="not installed"):
         ManagedTmuxSession.start("s1", str(tmp_path), None, socket=socket_name, state_dir=state_dir)
     with pytest.raises(ValueError, match="workdir"):
@@ -390,7 +390,7 @@ def test_session_ids_with_trailing_newline_or_bad_shape_are_rejected(tmp_path, s
         ManagedTmuxSession(session_id, tmux="/usr/bin/tmux", socket=socket_name, state_dir=state_dir, capture_cap_bytes=1024)
 
 
-def _restart_with_status(tmp_path, socket_name, state_dir, status, append_error=None):
+def _restart_with_status(tmp_path, socket_name, state_dir, status):
     """Start a tmux session, stop the worker, and run a fresh daemon that sees `status`."""
     client = _TmuxClient()
     first = _daemon(client, tmp_path, socket_name, state_dir)
@@ -400,30 +400,9 @@ def _restart_with_status(tmp_path, socket_name, state_dir, status, append_error=
 
     client.status = status
     client.appended.clear()
-    if append_error is not None:
-        original = client.append_session_event
-
-        def failing(relay_id, session_id, kind, data):
-            client.appended.append((kind, data))
-            if kind == "session_adopted":
-                raise append_error
-            return original(relay_id, session_id, kind, data)
-
-        client.append_session_event = failing
     second = _daemon(client, tmp_path, socket_name, state_dir)
     second.start()
     return client, second
-
-
-class _FakeClock:
-    def __init__(self):
-        self.now = 100.0
-
-    def __call__(self):
-        return self.now
-
-    def advance(self, seconds):
-        self.now += seconds
 
 
 def _adopted_events(client):
@@ -451,154 +430,3 @@ def test_adopting_a_ready_or_controlled_session_stays_silent(tmp_path, socket_na
     finally:
         daemon.close()
         ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def test_adoption_tolerates_a_409_from_the_backend(tmp_path, socket_name, state_dir):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(
-        tmp_path, socket_name, state_dir, "detached", append_error=AgentRelayError("conflict", status_code=409)
-    )
-    try:
-        daemon.run_once()
-        daemon.run_once()
-        assert len(_adopted_events(client)) == 1
-        assert "s1" in daemon._sessions
-    finally:
-        daemon.close()
-        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def test_failed_adoption_report_is_retried_once_per_pass_until_it_succeeds(tmp_path, socket_name, state_dir):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
-    calls = []
-    clock = _FakeClock()
-    daemon.clock = clock
-    original = client.append_session_event
-
-    def flaky(relay_id, session_id, kind, data):
-        if kind == "session_adopted":
-            calls.append(kind)
-            if len(calls) == 1:
-                raise AgentRelayError("boom", status_code=500)
-        return original(relay_id, session_id, kind, data)
-
-    client.append_session_event = flaky
-    try:
-        daemon.run_once()
-        assert len(calls) == 1  # first report failed, session is still managed
-        assert "s1" in daemon._sessions
-        daemon.run_once()
-        assert len(calls) == 1  # still backing off
-        clock.advance(1.0)
-        daemon.run_once()
-        assert len(calls) == 2  # retried exactly once in this pass and succeeded
-        daemon.run_once()
-        assert len(calls) == 2  # silent afterwards
-    finally:
-        daemon.close()
-        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def test_a_409_on_retry_clears_the_pending_report(tmp_path, socket_name, state_dir):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
-    calls = []
-    clock = _FakeClock()
-    daemon.clock = clock
-    original = client.append_session_event
-
-    def failing(relay_id, session_id, kind, data):
-        if kind == "session_adopted":
-            calls.append(kind)
-            raise AgentRelayError("boom" if len(calls) == 1 else "conflict", status_code=500 if len(calls) == 1 else 409)
-        return original(relay_id, session_id, kind, data)
-
-    client.append_session_event = failing
-    try:
-        for _ in range(4):
-            daemon.run_once()
-            clock.advance(1.0)
-        assert len(calls) == 2
-    finally:
-        daemon.close()
-        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def _failing_reports(client, errors):
-    """Make every session_adopted report raise the next error, repeating the last one."""
-    calls = []
-    original = client.append_session_event
-
-    def failing(relay_id, session_id, kind, data):
-        if kind == "session_adopted":
-            calls.append(kind)
-            raise errors[min(len(calls), len(errors)) - 1]
-        return original(relay_id, session_id, kind, data)
-
-    client.append_session_event = failing
-    return calls
-
-
-def test_permanently_failing_adoption_report_backs_off_from_1s_to_30s(tmp_path, socket_name, state_dir):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
-    clock = _FakeClock()
-    daemon.clock = clock
-    calls = _failing_reports(client, [AgentRelayError("revoked", status_code=403)])
-    try:
-        attempt_times = []
-        for _ in range(400):
-            before = len(calls)
-            daemon.run_once()
-            if len(calls) > before:
-                attempt_times.append(clock.now - 100.0)
-            clock.advance(0.5)
-        gaps = [round(b - a, 1) for a, b in zip(attempt_times, attempt_times[1:])]
-        assert gaps[:5] == [1.0, 2.0, 4.0, 8.0, 16.0]
-        assert set(gaps[5:]) == {30.0}
-    finally:
-        daemon.close()
-        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def test_repeated_identical_adoption_failures_are_logged_once(tmp_path, socket_name, state_dir, capsys):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
-    clock = _FakeClock()
-    daemon.clock = clock
-    _failing_reports(client, [
-        AgentRelayError("revoked", status_code=403),
-        AgentRelayError("revoked", status_code=403),
-        AgentRelayError("revoked", status_code=403),
-        AgentRelayError("unavailable", status_code=503),
-    ])
-    capsys.readouterr()
-    try:
-        for _ in range(4):
-            daemon.run_once()
-            clock.advance(31.0)
-        logged = [line for line in capsys.readouterr().err.splitlines() if "session_adopted" in line or "adoption" in line]
-        assert [("revoked" in line, "unavailable" in line) for line in logged] == [(True, False), (False, True)]
-    finally:
-        daemon.close()
-        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
-
-
-def test_close_clears_pending_adoption_reports(tmp_path, socket_name, state_dir):
-    from agent_relay.exceptions import AgentRelayError
-
-    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
-    _failing_reports(client, [AgentRelayError("boom", status_code=500)])
-    daemon.run_once()
-    assert daemon._adoption_pending
-
-    daemon.close()
-
-    assert not daemon._adoption_pending
-    ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()

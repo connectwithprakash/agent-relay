@@ -1,13 +1,10 @@
 """Managed local PTY sessions for worker-owned harness profiles."""
 from __future__ import annotations
 
-import codecs
 import fcntl
 import os
 import re
 import select
-import shlex
-import shutil
 import struct
 import subprocess
 import sys
@@ -18,9 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+import httpx
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as connect_websocket
 
 from .exceptions import AgentRelayError
+from .worker_common import _resolve_claude_launch, _validate_window_size
+from .worker_tmux import DEFAULT_TMUX_SOCKET, TMUX_PROFILE, ManagedTmuxSession
 
 
 _FIXTURE_PROGRAM = """import os, sys
@@ -36,19 +37,13 @@ for line in sys.stdin:
         print('echo:' + text, flush=True)
 """
 
-MIN_COLS, MAX_COLS = 20, 500
-MIN_ROWS, MAX_ROWS = 5, 200
-TMUX_PROFILE = "claude-code-tmux"
-DEFAULT_TMUX_SOCKET = "agent-relay"
-DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024
-_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_SEND_KEYS_CHUNK_BYTES = 256
-_READ_CHUNK_BYTES = 65536
-_MAX_READ_BYTES = 1024 * 1024
-_ROTATION_GRACE_SECONDS = 0.3
 _EXIT_DRAIN_SECONDS = 0.2
 _ADOPTION_RETRY_START_SECONDS = 1.0
 _ADOPTION_RETRY_MAX_SECONDS = 30.0
+_RECONNECT_START_SECONDS = 1.0
+_OUTPUT_EVENT_CHARS = 4096  # at most 16 KB of UTF-8 per output event, far below the 64 KB backend cap
+_UNSENT_OUTPUT_CAP_CHARS = 256 * 1024
+_UNSENT_PROMPTS_CAP = 16
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -101,24 +96,6 @@ class ApprovalDetector:
             self._buffer = self._buffer[end:]
         self._buffer = self._buffer[-_APPROVAL_BUFFER_CHARS:]
         return prompts
-
-
-def _validate_window_size(cols: object, rows: object) -> tuple[int, int]:
-    """Enforce the control-stream resize bounds (integers only, booleans rejected)."""
-    for value, low, high in ((cols, MIN_COLS, MAX_COLS), (rows, MIN_ROWS, MAX_ROWS)):
-        if type(value) is not int or not low <= value <= high:
-            raise ValueError(f"Terminal size must be integers within {low}..{high}")
-    return cols, rows  # type: ignore[return-value]
-
-
-def _resolve_claude_launch(workdir: str | None, executable: str | None) -> str:
-    """Return the Claude Code executable after the shared fail-closed local checks."""
-    claude = executable or shutil.which("claude")
-    if not claude or not Path(claude).is_absolute() or not os.access(claude, os.X_OK):
-        raise RuntimeError("Claude Code executable 'claude' is not installed")
-    if not workdir or not Path(workdir).is_absolute() or not Path(workdir).is_dir():
-        raise ValueError("Claude Code requires an existing absolute local workdir")
-    return claude
 
 
 @dataclass
@@ -232,279 +209,17 @@ class ManagedPtySession:
                 self.process.wait(timeout=2)
 
 
-def default_state_dir() -> Path:
-    """Private per-user directory for tmux capture, offset and cursor files."""
-    return Path.home() / ".agent-relay" / "worker"
-
-
-def _ensure_private_dir(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(path, 0o700)
-
-
-def _write_private(path: Path, text: str, *, append: bool = False) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
-    fd = os.open(path, flags, 0o600)
-    try:
-        os.write(fd, text.encode())
-    finally:
-        os.close(fd)
-
-
-def _replace_atomically(path: Path, text: str) -> None:
-    """Write via a private temp file in the same directory, then rename over the target."""
-    temp = path.with_name(path.name + ".tmp")
-    _write_private(temp, text)
-    os.replace(temp, path)
-
-
-class ManagedTmuxSession:
-    """A tmux-hosted Claude Code session that a restarted worker can re-attach to.
-
-    Output is captured with pipe-pane into private generation files under the state
-    directory; the worker reads them by persisted byte offset so a restart neither
-    drops nor repeats bytes. Each capture file is rotated once the read offset passes
-    the size cap, and a finished generation is deleted after it is fully drained.
-    """
-
-    profile = TMUX_PROFILE
-
-    def __init__(self, session_id: str, *, tmux: str, socket: str, state_dir: Path, capture_cap_bytes: int):
-        if not _SESSION_ID_PATTERN.fullmatch(session_id):
-            raise ValueError("Session ID is not safe to use as a tmux session name")
-        self.name = f"arelay-{session_id}"
-        self._target = f"={self.name}:"
-        self._tmux = tmux
-        self._socket = socket
-        self._state_dir = state_dir
-        self._cap = capture_cap_bytes
-        self._gen = 0
-        self._offset = 0
-        self._write_gen = 0
-        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        self._ended = False
-
-    @staticmethod
-    def _resolve_tmux(tmux_path: str | None) -> str:
-        tmux = tmux_path or shutil.which("tmux")
-        if not tmux or not Path(tmux).is_absolute() or not os.access(tmux, os.X_OK):
-            raise RuntimeError("tmux executable is not installed")
-        return tmux
-
-    @classmethod
-    def start(
-        cls,
-        session_id: str,
-        workdir: str | None,
-        executable: str | None,
-        *,
-        tmux_path: str | None = None,
-        socket: str = DEFAULT_TMUX_SOCKET,
-        state_dir: Path | str | None = None,
-        capture_cap_bytes: int = DEFAULT_CAPTURE_CAP_BYTES,
-    ) -> "ManagedTmuxSession":
-        """Create a detached tmux session running the allowlisted Claude Code executable."""
-        claude = _resolve_claude_launch(workdir, executable)
-        directory = Path(state_dir) if state_dir else default_state_dir()
-        session = cls(session_id, tmux=cls._resolve_tmux(tmux_path), socket=socket, state_dir=directory, capture_cap_bytes=capture_cap_bytes)
-        _ensure_private_dir(directory)
-        if session._exists():
-            raise RuntimeError(f"tmux session {session.name} already exists")
-        try:
-            # tmux runs a single command argument through /bin/sh, so the path is quoted.
-            # An idle placeholder holds the pane open while capture is attached, so the
-            # real command's first bytes are never written before pipe-pane is listening.
-            session._run("new-session", "-d", "-s", session.name, "-x", "120", "-y", "40", "-c", str(workdir), "cat")
-            session._run("set-option", "-g", "window-size", "manual")
-            session._run("set-option", "-g", "remain-on-exit", "on")
-            session._run("set-option", "-g", "default-terminal", "screen-256color")
-            session._start_pipe(0)
-            session._save_offset()
-            session._run("respawn-pane", "-k", "-t", session._target, "-c", str(workdir), "--", shlex.quote(claude))
-        except RuntimeError:
-            session.close()
-            raise
-        return session
-
-    @classmethod
-    def attach(
-        cls,
-        session_id: str,
-        *,
-        tmux_path: str | None = None,
-        socket: str = DEFAULT_TMUX_SOCKET,
-        state_dir: Path | str | None = None,
-        capture_cap_bytes: int = DEFAULT_CAPTURE_CAP_BYTES,
-    ) -> "ManagedTmuxSession | None":
-        """Adopt a still-running tmux session after a worker restart, or return None."""
-        directory = Path(state_dir) if state_dir else default_state_dir()
-        session = cls(session_id, tmux=cls._resolve_tmux(tmux_path), socket=socket, state_dir=directory, capture_cap_bytes=capture_cap_bytes)
-        if not session._exists():
-            return None
-        _ensure_private_dir(directory)
-        try:
-            saved = json.loads(session._path("offset").read_text())
-            session._gen, session._offset = int(saved["gen"]), int(saved["offset"])
-        except (OSError, ValueError, KeyError, TypeError):
-            session._gen, session._offset = 0, 0
-        generations = session._capture_generations()
-        session._write_gen = max(generations) if generations else session._gen
-        if session._run("display-message", "-p", "-t", session._target, "#{pane_pipe}", check=False).stdout.strip() != "1":
-            session._start_pipe(session._write_gen)
-        return session
-
-    def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        env = {key: value for key, value in os.environ.items() if key != "TMUX"}
-        result = subprocess.run(
-            [self._tmux, "-f", "/dev/null", "-L", self._socket, *args],
-            capture_output=True, text=True, env=env,
-        )
-        if check and result.returncode != 0:
-            raise RuntimeError(f"tmux {args[0]} failed: {result.stderr.strip()}")
-        return result
-
-    def _exists(self) -> bool:
-        return self._run("has-session", "-t", f"={self.name}", check=False).returncode == 0
-
-    def _path(self, suffix: str) -> Path:
-        return self._state_dir / f"{self.name}.{suffix}"
-
-    def _capture_path(self, generation: int) -> Path:
-        return self._path(f"{generation}.out")
-
-    def _capture_generations(self) -> list[int]:
-        found = []
-        for path in self._state_dir.glob(f"{self.name}.*.out"):
-            middle = path.name[len(self.name) + 1:-len(".out")]
-            if middle.isdigit():
-                found.append(int(middle))
-        return sorted(found)
-
-    def _start_pipe(self, generation: int) -> None:
-        path = self._capture_path(generation)
-        _write_private(path, "", append=True)
-        self._write_gen = generation
-        self._run("pipe-pane", "-O", "-t", self._target, f"cat >> {shlex.quote(str(path))}")
-
-    def _save_offset(self) -> None:
-        _replace_atomically(self._path("offset"), json.dumps({"gen": self._gen, "offset": self._offset}))
-
-    def display(self, template: str) -> str:
-        """Expand a tmux format string against this session's pane."""
-        return self._run("display-message", "-p", "-t", self._target, template).stdout.strip()
-
-    @property
-    def closed(self) -> bool:
-        """True once the session was closed or detached by this worker."""
-        return self._ended
-
-    def poll(self) -> int | None:
-        """Return the command's exit code once it has ended, else None."""
-        if self._ended:
-            return -1
-        if not self._exists():
-            return -1
-        dead, status, signal_number = self.display("#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}").split("|")
-        if dead != "1":
-            return None
-        if signal_number:
-            return -int(signal_number)
-        return int(status) if status else 0
-
-    def write(self, data: str) -> None:
-        """Send terminal input as exact bytes while the command is still running."""
-        if self.poll() is not None:
-            raise RuntimeError("Managed tmux session is not running")
-        raw = data.encode()
-        for start in range(0, len(raw), _SEND_KEYS_CHUNK_BYTES):
-            chunk = raw[start:start + _SEND_KEYS_CHUNK_BYTES]
-            self._run("send-keys", "-t", self._target, "-H", *[f"{byte:02x}" for byte in chunk])
-
-    def resize(self, cols: int, rows: int) -> None:
-        """Apply a controller window size to the tmux window within the contract bounds."""
-        _validate_window_size(cols, rows)
-        if self.poll() is not None:
-            raise RuntimeError("Managed tmux session is not running")
-        self._run("resize-window", "-t", self._target, "-x", str(cols), "-y", str(rows))
-
-    def _age(self, path: Path) -> float:
-        try:
-            return time.time() - path.stat().st_mtime
-        except FileNotFoundError:
-            return float("inf")
-
-    def _drain_once(self) -> bytes:
-        path = self._capture_path(self._gen)
-        try:
-            with open(path, "rb") as handle:
-                handle.seek(self._offset)
-                data = handle.read(_READ_CHUNK_BYTES)
-        except FileNotFoundError:
-            data = b""
-        if data:
-            self._offset += len(data)
-            return data
-        if self._gen < self._write_gen:
-            # Old generation: drop it only once its pipe has had time to finish flushing.
-            if self._age(path) > _ROTATION_GRACE_SECONDS:
-                path.unlink(missing_ok=True)
-                self._gen += 1
-                self._offset = 0
-                self._save_offset()
-            return b""
-        if self._offset >= self._cap:
-            self._start_pipe(self._write_gen + 1)
-        return b""
-
-    def read(self, timeout: float = 0.0) -> str:
-        """Return captured output not yet delivered, waiting at most timeout seconds."""
-        deadline = time.monotonic() + timeout
-        chunks: list[bytes] = []
-        total = 0
-        while total < _MAX_READ_BYTES:
-            data = self._drain_once()
-            if data:
-                chunks.append(data)
-                total += len(data)
-                deadline = time.monotonic() + 0.02
-            elif time.monotonic() >= deadline:
-                break
-            else:
-                time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
-        if chunks:
-            # Delivery is at-most-once: the offset is saved before the caller appends the
-            # output event, so a crash in that window drops these bytes rather than repeating them.
-            self._save_offset()
-        return self._decoder.decode(b"".join(chunks))
-
-    def save_cursor(self, sequence: int) -> None:
-        """Persist the last control event sequence this worker has applied."""
-        _replace_atomically(self._path("cursor"), str(int(sequence)))
-
-    def load_cursor(self) -> int:
-        """Return the persisted event cursor, or 0 when none was saved."""
-        try:
-            return int(self._path("cursor").read_text().strip())
-        except (OSError, ValueError):
-            return 0
-
-    def detach(self) -> None:
-        """Leave tmux running for a later re-attach; keep the state files."""
-        if not self._ended:
-            self._save_offset()
-        self._ended = True
-
-    def close(self) -> None:
-        """End the tmux session and remove every state file belonging to it."""
-        self._ended = True
-        self._run("kill-session", "-t", f"={self.name}", check=False)
-        for path in self._state_dir.glob(f"{self.name}.*"):
-            path.unlink(missing_ok=True)
+def _is_retryable(error: Exception) -> bool:
+    """True for failures that can succeed on a later attempt: transport, 408, 429, 5xx."""
+    if isinstance(error, httpx.HTTPError):
+        return True
+    status = getattr(error, "status_code", None)
+    return status is None or status >= 500 or status in (408, 429)
 
 
 @dataclass
-class _PendingAdoption:
-    """Retry state for one session_adopted report that the backend has not accepted."""
+class _RetryState:
+    """Backoff state for one retried backend call, keyed by session."""
 
     next_attempt: float = 0.0
     delay: float = _ADOPTION_RETRY_START_SECONDS
@@ -529,7 +244,13 @@ class WorkerDaemon:
         self._sessions: dict[str, ManagedPtySession | ManagedTmuxSession] = {}
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
-        self._adoption_pending: dict[str, _PendingAdoption] = {}
+        self._adoption_pending: dict[str, _RetryState] = {}
+        self._session_errors: dict[str, str] = {}
+        self._ready_pending: set[str] = set()
+        self._unsent_output: dict[str, str] = {}
+        self._unsent_prompts: dict[str, list[str]] = {}
+        self._session_backoff: dict[str, _RetryState] = {}
+        self._notices: set[tuple[str, str]] = set()
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -556,14 +277,14 @@ class WorkerDaemon:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
             if session["status"] == "detached":
-                self._adoption_pending[session_id] = _PendingAdoption()
+                self._adoption_pending[session_id] = _RetryState()
         return adopted
 
     def _report_pending_adoption(self, session_id: str) -> None:
         """Tell the backend a detached session is back, retrying with backoff until accepted.
 
         A 409 means the session already moved on, so the report is dropped. Any other
-        failure is logged when it first appears or changes, and retried after a delay that
+        failure, including a transport error, is logged when it first appears or changes, and retried after a delay that
         doubles from one to thirty seconds so a permanent failure stays quiet and cheap.
         """
         pending = self._adoption_pending.get(session_id)
@@ -571,26 +292,71 @@ class WorkerDaemon:
             return
         try:
             self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
-        except AgentRelayError as error:
-            if error.status_code != 409:
-                if str(error) != pending.last_error:
-                    print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
-                    pending.last_error = str(error)
+        except (AgentRelayError, httpx.HTTPError) as error:
+            if getattr(error, "status_code", None) != 409:
+                description = f"{type(error).__name__}: {error}" if isinstance(error, httpx.HTTPError) else str(error)
+                if description != pending.last_error:
+                    print(f"Could not report adoption of {session_id}, will retry: {description}", file=sys.stderr)
+                    pending.last_error = description
                 pending.next_attempt = self.clock() + pending.delay
                 pending.delay = min(pending.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
                 return
         del self._adoption_pending[session_id]
 
+    def _notice_once(self, session_id: str, kind: str, message: str) -> None:
+        """Log a data-loss notice once per outage; a fully delivered relay re-arms it."""
+        if (session_id, kind) not in self._notices:
+            self._notices.add((session_id, kind))
+            print(f"Session {session_id}: {message}", file=sys.stderr)
+
     def _relay_output(self, session_id: str, output: str) -> None:
-        """Append terminal output as an event and report any permission prompts it completes."""
-        if not output:
-            return
-        self.client.append_session_event(self.relay_id, session_id, "output", {"text": output})
+        """Append terminal output as events and report any permission prompts it completes.
+
+        Output is sent in events well under the backend size limit. Output or prompts that
+        fail for a reason that can pass later (transport, 408, 429, 5xx) are kept, bounded,
+        and sent first on the next call; anything the backend rejects for good is dropped.
+        """
+        prompts = self._unsent_prompts.pop(session_id, [])
+        text = self._unsent_output.pop(session_id, "") + output
+        pieces = [text[start:start + _OUTPUT_EVENT_CHARS] for start in range(0, len(text), _OUTPUT_EVENT_CHARS)]
         detector = self._approval_detectors.setdefault(session_id, ApprovalDetector())
-        for prompt in detector.feed(output):
-            self.client.append_session_event(
-                self.relay_id, session_id, "approval_requested", {"prompt": prompt}
-            )
+        dropped = False
+        for index, piece in enumerate(pieces):
+            try:
+                self.client.append_session_event(self.relay_id, session_id, "output", {"text": piece})
+            except (AgentRelayError, httpx.HTTPError) as error:
+                if _is_retryable(error):
+                    self._retain(session_id, "".join(pieces[index:]), prompts)
+                    raise
+                dropped = True
+                self._notice_once(session_id, "drop", f"output dropped, the backend rejected it: {error}")
+            prompts = prompts + detector.feed(piece)
+        for index, prompt in enumerate(prompts):
+            try:
+                self.client.append_session_event(
+                    self.relay_id, session_id, "approval_requested", {"prompt": prompt}
+                )
+            except (AgentRelayError, httpx.HTTPError) as error:
+                if _is_retryable(error):
+                    self._retain(session_id, "", prompts[index:])
+                    raise
+                dropped = True
+                self._notice_once(session_id, "drop", f"approval prompt dropped, the backend rejected it: {error}")
+        if not dropped:
+            self._notices = {notice for notice in self._notices if notice[0] != session_id}
+
+    def _retain(self, session_id: str, text: str, prompts: list[str]) -> None:
+        """Keep undelivered output and prompts for the next pass, dropping the oldest past the caps."""
+        if len(text) > _UNSENT_OUTPUT_CAP_CHARS:
+            text = text[-_UNSENT_OUTPUT_CAP_CHARS:]
+            self._notice_once(session_id, "overflow-output", "backend outage, dropping the oldest unsent output")
+        if len(prompts) > _UNSENT_PROMPTS_CAP:
+            prompts = prompts[-_UNSENT_PROMPTS_CAP:]
+            self._notice_once(session_id, "overflow-prompts", "backend outage, dropping the oldest unsent approval prompts")
+        if text:
+            self._unsent_output[session_id] = text
+        if prompts:
+            self._unsent_prompts[session_id] = prompts
 
     def _record_cursor(self, session_id: str, pty_session, sequence: int) -> None:
         """Advance the event cursor, persisting it first so a crash cannot replay input."""
@@ -623,50 +389,84 @@ class WorkerDaemon:
         heartbeat = getattr(self.client, "heartbeat_worker", None)
         if heartbeat:
             heartbeat(self.relay_id, self.worker_id)
-        for session in self.client.list_worker_sessions(self.relay_id, self.worker_id):
+        listed = self.client.list_worker_sessions(self.relay_id, self.worker_id)
+        for session in listed:
             session_id = session["session_id"]
-            if session["status"] in {"detached", "ready", "controlled"} and session_id not in self._sessions:
-                if self._reattach(session) is None:
-                    self.client.append_session_event(
-                        self.relay_id,
-                        session_id,
-                        "session_failed",
-                        {"reason": "worker_restarted"},
-                    )
-                    continue
-            if session["status"] == "starting" and session_id not in self._sessions:
-                self._sessions[session_id] = self._start_session(session)
-                self.client.mark_session_ready(self.relay_id, session_id)
-
-            pty_session = self._sessions.get(session_id)
-            if not pty_session:
+            backoff = self._session_backoff.get(session_id)
+            if backoff is not None and self.clock() < backoff.next_attempt:
                 continue
-            self._report_pending_adoption(session_id)
-            exit_code = pty_session.poll()
-            if exit_code is not None:
-                self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
+            try:
+                self._process_session(session)
+            except (AgentRelayError, httpx.HTTPError) as error:
+                self._log_session_error(session_id, error)
+                if not _is_retryable(error):
+                    backoff = self._session_backoff.setdefault(session_id, _RetryState())
+                    backoff.next_attempt = self.clock() + backoff.delay
+                    backoff.delay = min(backoff.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
+            else:
+                self._session_errors.pop(session_id, None)
+                self._session_backoff.pop(session_id, None)
+        listed_ids = {session["session_id"] for session in listed}
+        for tracked in (self._session_errors, self._session_backoff):
+            for gone in [key for key in tracked if key not in listed_ids]:
+                del tracked[gone]
+
+    def _log_session_error(self, session_id: str, error: Exception) -> None:
+        """Log a session's backend failure once per distinct error; the pass moves on."""
+        description = f"{type(error).__name__}: {error}" if isinstance(error, httpx.HTTPError) else str(error)
+        if self._session_errors.get(session_id) != description:
+            print(f"Session {session_id} failed this pass, will retry: {description}", file=sys.stderr)
+            self._session_errors[session_id] = description
+
+    def _process_session(self, session: dict) -> None:
+        """Start, adopt, or relay terminal I/O for one session."""
+        session_id = session["session_id"]
+        if session["status"] in {"detached", "ready", "controlled"} and session_id not in self._sessions:
+            if self._reattach(session) is None:
                 self.client.append_session_event(
                     self.relay_id,
                     session_id,
-                    "session_exited",
-                    {"exit_code": exit_code},
+                    "session_failed",
+                    {"reason": "worker_restarted"},
                 )
-                pty_session.close()
-                del self._sessions[session_id]
-                self._approval_detectors.pop(session_id, None)
-                self._adoption_pending.pop(session_id, None)
-                continue
-            events = self.client.get_session_events(
-                self.relay_id, session_id, self._cursors.get(session_id, 0)
-            )
-            for event in events:
-                self._record_cursor(session_id, pty_session, event["sequence"])
-                if event["kind"] == "input_requested":
-                    pty_session.write(event["data"]["input"])
-                elif event["kind"] == "resize_requested":
-                    self._apply_resize(pty_session, event["data"])
+                return
+        if session["status"] == "starting" and session_id not in self._sessions:
+            self._sessions[session_id] = self._start_session(session)
+            self._ready_pending.add(session_id)
+        if session_id in self._ready_pending:
+            self.client.mark_session_ready(self.relay_id, session_id)
+            self._ready_pending.discard(session_id)
 
-            self._relay_output(session_id, pty_session.read(timeout=0.05 if events else 0.0))
+        pty_session = self._sessions.get(session_id)
+        if not pty_session:
+            return
+        self._report_pending_adoption(session_id)
+        exit_code = pty_session.poll()
+        if exit_code is not None:
+            self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
+            self.client.append_session_event(
+                self.relay_id,
+                session_id,
+                "session_exited",
+                {"exit_code": exit_code},
+            )
+            pty_session.close()
+            del self._sessions[session_id]
+            self._approval_detectors.pop(session_id, None)
+            self._adoption_pending.pop(session_id, None)
+            self._ready_pending.discard(session_id)
+            return
+        events = self.client.get_session_events(
+            self.relay_id, session_id, self._cursors.get(session_id, 0)
+        )
+        for event in events:
+            self._record_cursor(session_id, pty_session, event["sequence"])
+            if event["kind"] == "input_requested":
+                pty_session.write(event["data"]["input"])
+            elif event["kind"] == "resize_requested":
+                self._apply_resize(pty_session, event["data"])
+
+        self._relay_output(session_id, pty_session.read(timeout=0.05 if events else 0.0))
 
     def close(self) -> None:
         """Stop owned PTYs; tmux sessions are detached and left running for re-attach."""
@@ -675,9 +475,37 @@ class WorkerDaemon:
         self._sessions.clear()
         self._approval_detectors.clear()
         self._adoption_pending.clear()
+        self._session_errors.clear()
+        self._ready_pending.clear()
+        self._unsent_output.clear()
+        self._unsent_prompts.clear()
+        self._session_backoff.clear()
+        self._notices.clear()
+
+    def run_stream_with_reconnect(self, session_id: str, *, max_attempts: int = 5, sleep=time.sleep, **stream_options) -> None:
+        """Run the live stream, reconnecting with doubling backoff up to max_attempts connections.
+
+        worker-run does not call this yet; it uses the polling path in run_once.
+        """
+        delay = _RECONNECT_START_SECONDS
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.stream_owned_session(session_id, **stream_options)
+            except (ConnectionClosed, OSError) as error:
+                session = self._sessions.get(session_id)
+                if attempt == max_attempts or session is None or session.closed:
+                    raise
+                print(f"Stream for {session_id} dropped ({type(error).__name__}), reconnecting in {delay:g}s", file=sys.stderr)
+                sleep(delay)
+                delay = min(delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
 
     def stream_owned_session(self, session_id: str, *, max_frames: int | None = None, connection_factory=connect_websocket) -> None:
-        """Bridge one owned PTY over the authenticated per-session live stream."""
+        """Bridge one owned PTY over the authenticated per-session live stream.
+
+        A dropped or refused connection raises (for example ConnectionClosedError) by
+        design; this method never reconnects. worker-run uses the polling path, and a
+        caller that wants a live stream owns reconnects, see run_stream_with_reconnect.
+        """
         if not self.worker_id or session_id not in self._sessions:
             raise RuntimeError("Worker does not own this managed session")
         token = getattr(self.client, "_token", None)
