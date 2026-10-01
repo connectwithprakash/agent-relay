@@ -16,6 +16,8 @@ function hasActiveLease(session, agent) {
   );
 }
 
+const SESSION_END_KINDS = new Set(['session_failed', 'session_exited']);
+
 const ERROR_FALLBACKS = {
   invalid_resize: 'The terminal size was rejected by the relay.',
   worker_unavailable: 'The worker is unavailable.',
@@ -40,14 +42,19 @@ export default function LiveControlPage() {
   const { relayId, sessionId } = useParams();
   const token = getToken(relayId);
   const agent = getAgent(relayId);
-  const [session, setSession] = useState(null);
-  const sessionStatusRef = useRef(null);
+  const [session, setSessionState] = useState(null);
+  const sessionRef = useRef(null);
   const [lease, setLease] = useState(false);
   const [terminal, setTerminal] = useState('');
   const [input, setInput] = useState('');
   const [approvalPrompt, setApprovalPrompt] = useState(null);
   const [error, setError] = useState('');
 
+
+  const setSession = useCallback((update) => {
+    sessionRef.current = typeof update === 'function' ? update(sessionRef.current) : update;
+    setSessionState(sessionRef.current);
+  }, []);
 
   const request = useCallback(async (path, options = {}) => {
     const response = await fetch(`${apiBase}${path}`, {
@@ -64,15 +71,15 @@ export default function LiveControlPage() {
       const result = await request(`/relays/${relayId}/sessions`);
       const next = result.sessions.find((item) => item.session_id === sessionId);
       if (!next) throw new Error('Session not found');
+      if (sessionRef.current && next.version < sessionRef.current.version) return;
       setSession(next);
       setLease(hasActiveLease(next, agent));
     } catch (cause) {
       setError(cause.message);
     }
-  }, [agent, relayId, request, sessionId, token]);
+  }, [agent, relayId, request, sessionId, setSession, token]);
 
   useEffect(() => { loadSession(); }, [loadSession]);
-  useEffect(() => { sessionStatusRef.current = session?.status; }, [session?.status]);
 
   const onFrame = useCallback((frame) => {
     if (frame.type === 'connected') setLease(Boolean(frame.lease?.held));
@@ -80,7 +87,11 @@ export default function LiveControlPage() {
       setTerminal((current) => current + (frame.event.data?.text || ''));
     }
     if (frame.type === 'event' && frame.event?.kind === 'input_requested') setApprovalPrompt(null);
-    if (frame.type === 'event' && frame.event?.kind === 'session_adopted' && sessionStatusRef.current !== 'failed') void loadSession();
+    if (frame.type === 'event' && frame.event?.kind === 'session_adopted' && sessionRef.current?.status !== 'failed') void loadSession();
+    if (frame.type === 'event' && SESSION_END_KINDS.has(frame.event?.kind)) {
+      setSession((current) => current ? { ...current, status: 'failed' } : current);
+      setLease(false);
+    }
     if (frame.type === 'event' && frame.event?.kind === 'approval_requested' && typeof frame.event.data?.prompt === 'string' && frame.event.data.prompt) {
       setApprovalPrompt(frame.event.data.prompt);
     }
@@ -94,7 +105,7 @@ export default function LiveControlPage() {
       setError(frame.message || ERROR_FALLBACKS[frame.code] || 'The relay reported an error.');
       if (frame.code === 'worker_unavailable') setSession((current) => current ? { ...current, worker_status: 'offline' } : current);
     }
-  }, [loadSession]);
+  }, [loadSession, setSession]);
 
   const { status, sendInput, sendResize, reconnect } = useControlStream({
     url: token ? `${wsBase}/relays/${relayId}/sessions/${sessionId}/stream` : '',

@@ -168,6 +168,8 @@ The browser terminal reports its size over the control stream after a 150 ms deb
 
 When the worker recognizes a Claude Code permission prompt in the terminal output, it reports it once as an `approval_requested` event and the live page shows the prompt text in a banner above the terminal. The banner has only a Dismiss button; the controller answers by typing into the terminal or the input box, which uses the normal input path. It clears on Dismiss, when a newer approval arrives, when you send input from the page, or when a later `input_requested` event is seen. Ordinary terminal redraws do not clear it.
 
+Detection is best effort. It matches the "Do you want to ... 1. Yes ... No" dialog shape, and it has been verified only against hand-written fixtures and the folder-trust dialog, never against a captured real permission prompt. A prompt that is missed simply shows no banner; the terminal still shows it and you can answer there.
+
 ### tmux profile
 
 `claude-code-tmux` is a second allowlisted profile that runs Claude Code inside a tmux session, so the session can outlive a worker restart. It needs tmux on the worker device and the same `--claude-workdir` and `--claude-executable` settings as `claude-code`. When the restarted worker finds the tmux session alive it reports `session_adopted`; a detached session then returns to `ready` and a controller claims a new lease. A failed session is never resurrected.

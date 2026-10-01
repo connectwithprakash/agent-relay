@@ -142,7 +142,7 @@ sequenceDiagram
 
 ### User goal
 
-A remote harness pauses safely when it needs permission, and the authorized controller or human can see the exact prompt and answer it from the live control page.
+A remote harness pauses safely when it needs permission, and the authorized controller or human can usually see the exact prompt in a banner and answer it from the live control page.
 
 ```mermaid
 sequenceDiagram
@@ -169,6 +169,7 @@ sequenceDiagram
 
 ### Contract
 
+- Detection is best effort. It covers the "Do you want to ... 1. Yes ... No" dialog shape and was verified only against hand-written fixtures and the folder-trust dialog, never a captured real permission prompt. A missed prompt shows no banner, but the terminal still shows it and the controller can answer there.
 - Detection belongs to the worker. It matches known Claude Code permission prompts, reports each prompt once, and never alters the `output` stream.
 - The prompt is a non-empty string of at most 4096 bytes. The browser renders it as plain text and ignores any other payload.
 - There is no approve or reject frame. The controller answers with ordinary `input`, so only the holder of an active lease can respond.

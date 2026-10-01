@@ -260,4 +260,47 @@ describe('LiveControlPage session adoption', () => {
     act(() => sockets[0].onmessage(frame('session_adopted', 3, {})));
     expect(await screen.findByText('session failed')).toBeInTheDocument();
   });
+
+  it('ignores a slow older session response that arrives after a newer one', async () => {
+    let releaseFirst;
+    const first = new Promise((resolve) => { releaseFirst = resolve; });
+    const queue = [
+      () => first.then(() => ({ ok: true, json: async () => ({ sessions: [detached] }) })),
+      () => Promise.resolve({ ok: true, json: async () => ({ sessions: [adopted] }) }),
+    ];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => (queue.length > 1 ? queue.shift()() : queue[0]())));
+    await open();
+
+    act(() => sockets[0].onmessage(frame('session_adopted', 1, {})));
+    await screen.findByText('session ready');
+    await act(async () => { releaseFirst(); await first; });
+
+    expect(screen.getByText('session ready')).toBeInTheDocument();
+    expect(screen.queryByText('session detached')).toBeNull();
+  });
+
+  it.each(['session_failed', 'session_exited'])('marks the session failed on %s without a refetch', async (kind) => {
+    respondWith({ ...detached, status: 'ready' });
+    await open();
+    await screen.findByText('session ready');
+    fetch.mockClear();
+
+    act(() => sockets[0].onmessage(frame(kind, 4, {})));
+
+    expect(screen.getByText('session failed')).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch on session_adopted right after the session failed', async () => {
+    respondWith({ ...detached, status: 'ready' });
+    await open();
+    await screen.findByText('session ready');
+    act(() => sockets[0].onmessage(frame('session_failed', 4, {})));
+    fetch.mockClear();
+
+    act(() => sockets[0].onmessage(frame('session_adopted', 5, {})));
+
+    expect(screen.getByText('session failed')).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
