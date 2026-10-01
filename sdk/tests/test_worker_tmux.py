@@ -388,3 +388,85 @@ def test_executable_path_with_spaces_and_metacharacters_is_launched_literally(tm
 def test_session_ids_with_trailing_newline_or_bad_shape_are_rejected(tmp_path, socket_name, state_dir, session_id):
     with pytest.raises(ValueError):
         ManagedTmuxSession(session_id, tmux="/usr/bin/tmux", socket=socket_name, state_dir=state_dir, capture_cap_bytes=1024)
+
+
+def _restart_with_status(tmp_path, socket_name, state_dir, status, append_error=None):
+    """Start a tmux session, stop the worker, and run a fresh daemon that sees `status`."""
+    client = _TmuxClient()
+    first = _daemon(client, tmp_path, socket_name, state_dir)
+    first.start()
+    first.run_once()
+    first.close()
+
+    client.status = status
+    client.appended.clear()
+    if append_error is not None:
+        original = client.append_session_event
+
+        def failing(relay_id, session_id, kind, data):
+            client.appended.append((kind, data))
+            if kind == "session_adopted":
+                raise append_error
+            return original(relay_id, session_id, kind, data)
+
+        client.append_session_event = failing
+    second = _daemon(client, tmp_path, socket_name, state_dir)
+    second.start()
+    return client, second
+
+
+def _adopted_events(client):
+    return [entry for entry in client.appended if entry[0] == "session_adopted"]
+
+
+def test_adopting_a_detached_session_reports_session_adopted_once(tmp_path, socket_name, state_dir):
+    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, "detached")
+    try:
+        daemon.run_once()
+        daemon.run_once()
+        assert _adopted_events(client) == [("session_adopted", {})]
+        assert not [kind for kind, _ in client.appended if kind == "session_failed"]
+    finally:
+        daemon.close()
+        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
+
+
+@pytest.mark.parametrize("status", ["ready", "controlled"])
+def test_adopting_a_ready_or_controlled_session_stays_silent(tmp_path, socket_name, state_dir, status):
+    client, daemon = _restart_with_status(tmp_path, socket_name, state_dir, status)
+    try:
+        daemon.run_once()
+        assert _adopted_events(client) == []
+    finally:
+        daemon.close()
+        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
+
+
+def test_adoption_tolerates_a_409_from_the_backend(tmp_path, socket_name, state_dir):
+    from agent_relay.exceptions import AgentRelayError
+
+    client, daemon = _restart_with_status(
+        tmp_path, socket_name, state_dir, "detached", append_error=AgentRelayError("conflict", status_code=409)
+    )
+    try:
+        daemon.run_once()
+        daemon.run_once()
+        assert len(_adopted_events(client)) == 1
+        assert "s1" in daemon._sessions
+    finally:
+        daemon.close()
+        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
+
+
+def test_other_adoption_errors_are_not_swallowed(tmp_path, socket_name, state_dir):
+    from agent_relay.exceptions import AgentRelayError
+
+    client, daemon = _restart_with_status(
+        tmp_path, socket_name, state_dir, "detached", append_error=AgentRelayError("boom", status_code=500)
+    )
+    try:
+        with pytest.raises(AgentRelayError):
+            daemon.run_once()
+    finally:
+        daemon.close()
+        ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()

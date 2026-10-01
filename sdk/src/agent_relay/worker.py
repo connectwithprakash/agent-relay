@@ -20,6 +20,8 @@ from urllib.parse import urlparse, urlunparse
 
 from websockets.sync.client import connect as connect_websocket
 
+from .exceptions import AgentRelayError
+
 
 _FIXTURE_PROGRAM = """import sys
 print('fixture ready', flush=True)
@@ -523,7 +525,17 @@ class WorkerDaemon:
         if adopted is not None:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
+            if session["status"] == "detached":
+                self._report_adoption(session_id)
         return adopted
+
+    def _report_adoption(self, session_id: str) -> None:
+        """Tell the backend a detached session is back; a 409 means it already moved on."""
+        try:
+            self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
+        except AgentRelayError as error:
+            if error.status_code != 409:
+                raise
 
     def _relay_output(self, session_id: str, output: str) -> None:
         """Append terminal output as an event and report any permission prompts it completes."""
