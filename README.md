@@ -185,7 +185,7 @@ When a restarted worker re-attaches to a tmux session whose status is `detached`
 | Worker to controller | `{"type":"output","text":"..."}` | `output` | Terminal bytes as text. |
 | Worker to controller | `{"type":"approval","prompt":"..."}` | `approval_requested` | Non-empty string, at most 4096 bytes. |
 | Worker to server (HTTP) | event `session_adopted`, no data | `session_adopted` | Only for a detached session from its own online worker, otherwise 409. Moves the session to `ready`, no lease restored. Pushed live to controllers. |
-| Worker to server (HTTP) | event `session_exited` or `session_failed` | same | Marks the session `failed` and releases the lease. Not pushed live; controllers see it in the next replay. |
+| Worker to server (HTTP) | event `session_exited` or `session_failed` | same | Marks the session `failed` and releases the lease. Pushed live to controllers after the change is committed. Changes the server derives itself, such as a stale worker marking its sessions `detached`, are not pushed live and appear on the next session fetch. |
 | Server to controller | `{"type":"error","code":"..."}` | none | Codes: `invalid_resize`, `invalid_input`, `invalid_output`, `invalid_approval`, `invalid_frame`, `lease_required`, `worker_unavailable`. |
 
 The full contract is in `docs/control-stream-resize-approval.md`.
