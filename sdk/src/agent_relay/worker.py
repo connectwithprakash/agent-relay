@@ -47,6 +47,8 @@ _READ_CHUNK_BYTES = 65536
 _MAX_READ_BYTES = 1024 * 1024
 _ROTATION_GRACE_SECONDS = 0.3
 _EXIT_DRAIN_SECONDS = 0.2
+_ADOPTION_RETRY_START_SECONDS = 1.0
+_ADOPTION_RETRY_MAX_SECONDS = 30.0
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -500,10 +502,19 @@ class ManagedTmuxSession:
             path.unlink(missing_ok=True)
 
 
+@dataclass
+class _PendingAdoption:
+    """Retry state for one session_adopted report that the backend has not accepted."""
+
+    next_attempt: float = 0.0
+    delay: float = _ADOPTION_RETRY_START_SECONDS
+    last_error: str | None = None
+
+
 class WorkerDaemon:
     """Bridge authenticated control events to worker-owned managed PTYs."""
 
-    def __init__(self, client, relay_id: str, name: str, profiles: list[str], profile_workdirs: dict[str, str] | None = None, profile_executables: dict[str, str] | None = None, state_dir: Path | str | None = None, tmux_path: str | None = None, tmux_socket: str = DEFAULT_TMUX_SOCKET):
+    def __init__(self, client, relay_id: str, name: str, profiles: list[str], profile_workdirs: dict[str, str] | None = None, profile_executables: dict[str, str] | None = None, state_dir: Path | str | None = None, tmux_path: str | None = None, tmux_socket: str = DEFAULT_TMUX_SOCKET, clock=time.monotonic):
         self.client = client
         self.relay_id = relay_id
         self.name = name
@@ -513,11 +524,12 @@ class WorkerDaemon:
         self.state_dir = state_dir
         self.tmux_path = tmux_path
         self.tmux_socket = tmux_socket
+        self.clock = clock
         self.worker_id: str | None = None
         self._sessions: dict[str, ManagedPtySession | ManagedTmuxSession] = {}
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
-        self._adoption_pending: set[str] = set()
+        self._adoption_pending: dict[str, _PendingAdoption] = {}
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -544,24 +556,30 @@ class WorkerDaemon:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
             if session["status"] == "detached":
-                self._adoption_pending.add(session_id)
+                self._adoption_pending[session_id] = _PendingAdoption()
         return adopted
 
     def _report_pending_adoption(self, session_id: str) -> None:
-        """Tell the backend a detached session is back, once per pass until it is accepted.
+        """Tell the backend a detached session is back, retrying with backoff until accepted.
 
         A 409 means the session already moved on, so the report is dropped. Any other
-        failure keeps it pending for the next pass instead of aborting the others.
+        failure is logged when it first appears or changes, and retried after a delay that
+        doubles from one to thirty seconds so a permanent failure stays quiet and cheap.
         """
-        if session_id not in self._adoption_pending:
+        pending = self._adoption_pending.get(session_id)
+        if pending is None or self.clock() < pending.next_attempt:
             return
         try:
             self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
         except AgentRelayError as error:
             if error.status_code != 409:
-                print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
+                if str(error) != pending.last_error:
+                    print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
+                    pending.last_error = str(error)
+                pending.next_attempt = self.clock() + pending.delay
+                pending.delay = min(pending.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
                 return
-        self._adoption_pending.discard(session_id)
+        del self._adoption_pending[session_id]
 
     def _relay_output(self, session_id: str, output: str) -> None:
         """Append terminal output as an event and report any permission prompts it completes."""
@@ -636,7 +654,7 @@ class WorkerDaemon:
                 pty_session.close()
                 del self._sessions[session_id]
                 self._approval_detectors.pop(session_id, None)
-                self._adoption_pending.discard(session_id)
+                self._adoption_pending.pop(session_id, None)
                 continue
             events = self.client.get_session_events(
                 self.relay_id, session_id, self._cursors.get(session_id, 0)
@@ -656,6 +674,7 @@ class WorkerDaemon:
             session.detach()
         self._sessions.clear()
         self._approval_detectors.clear()
+        self._adoption_pending.clear()
 
     def stream_owned_session(self, session_id: str, *, max_frames: int | None = None, connection_factory=connect_websocket) -> None:
         """Bridge one owned PTY over the authenticated per-session live stream."""
