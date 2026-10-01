@@ -20,6 +20,8 @@ function hasActiveLease(session, agent) {
 }
 
 const LEASE_SECONDS = 60;
+const RENEW_FIRST_FRACTION = 0.5;
+const RENEW_RETRY_FRACTION = 0.75;
 const SESSION_END_KINDS = new Set(['session_failed', 'session_exited']);
 
 const ERROR_FALLBACKS = {
@@ -146,18 +148,30 @@ function LiveControlSession() {
   useEffect(() => {
     const expiresMs = parseServerTimestamp(leaseExpiresAt);
     if (!canRenew || !Number.isFinite(expiresMs) || failedRenewalRef.current === leaseExpiresAt) return undefined;
-    // Renew once, halfway through the remaining lease. A failure is remembered for this
-    // expiry, so there is no retry loop; the expiry transition then ends control.
-    const timer = setTimeout(async () => {
+    // Renew once, halfway through the remaining lease. A network error or 5xx gets one
+    // retry three quarters of the way through; any other failure, or a failed retry, is
+    // remembered for this expiry, so there is no loop and the expiry transition ends control.
+    const startedAt = Date.now();
+    const remainingMs = expiresMs - startedAt;
+    let cancelled = false;
+    let retryTimer;
+    const attempt = async (isRetry) => {
       try {
         const renewed = await renewLease(relayId, sessionId, { expectedVersion: sessionRef.current.version, leaseSeconds: LEASE_SECONDS });
         setSession((current) => ({ ...renewed, worker_status: current?.worker_status }));
       } catch (cause) {
+        if (cancelled) return;
+        const transient = cause.status === undefined || cause.status >= 500;
+        if (transient && !isRetry) {
+          retryTimer = setTimeout(() => attempt(true), Math.max(0, startedAt + remainingMs * RENEW_RETRY_FRACTION - Date.now()));
+          return;
+        }
         failedRenewalRef.current = leaseExpiresAt;
         if (cause.status === 409) void loadSession();
       }
-    }, Math.max(0, (expiresMs - Date.now()) / 2));
-    return () => clearTimeout(timer);
+    };
+    const timer = setTimeout(() => attempt(false), Math.max(0, remainingMs * RENEW_FIRST_FRACTION));
+    return () => { cancelled = true; clearTimeout(timer); clearTimeout(retryTimer); };
   }, [canRenew, leaseExpiresAt, loadSession, relayId, sessionId, setSession]);
 
   const sendTerminalInput = useCallback((data) => {

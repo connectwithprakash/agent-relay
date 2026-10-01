@@ -138,15 +138,88 @@ describe('LiveControlPage lease renewal', () => {
     expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
   });
 
-  it('stops after a network failure without a retry loop', async () => {
+  it('stops after a network failure and its single retry without a loop', async () => {
     renewHandler = () => new TypeError('Failed to fetch');
     await open();
 
     await advance(31_000);
     await advance(120_000);
 
-    expect(renewCalls).toHaveLength(1);
+    expect(renewCalls).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+  });
+
+  const serverError = () => ({ ok: false, status: 500, statusText: 'Server Error', json: async () => ({}) });
+
+  it.each([
+    ['a 500', () => serverError()],
+    ['a network error', () => new TypeError('Failed to fetch')],
+  ])('retries once at about 75 percent of the lease after %s and keeps control when the retry works', async (_name, failure) => {
+    renewHandler = (n) => (n === 1 ? failure() : renewedResponse(4)());
+    await open();
+
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+    await advance(16_000);
+
+    expect(renewCalls).toHaveLength(2);
+    expect(renewCalls[1].at - T0).toBeGreaterThanOrEqual(44_000);
+    expect(renewCalls[1].at - T0).toBeLessThanOrEqual(46_500);
+    expect(renewCalls[1].body.expected_version).toBe(3);
+    await advance(20_000);
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('makes only two attempts when a 500 repeats, then lets the lease run out', async () => {
+    renewHandler = () => serverError();
+    await open();
+
+    await advance(31_000);
+    await advance(16_000);
+    await advance(120_000);
+
+    expect(renewCalls).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+  });
+
+  it.each([
+    [400, 'Bad Request'],
+    [403, 'Forbidden'],
+    [409, 'Conflict'],
+  ])('does not retry after a %s', async (status, statusText) => {
+    renewHandler = () => ({ ok: false, status, statusText, json: async () => ({ detail: 'refused' }) });
+    await open();
+
+    await advance(31_000);
+    await advance(40_000);
+
+    expect(renewCalls).toHaveLength(1);
+  });
+
+  it('drops the retry when the lease is no longer held', async () => {
+    renewHandler = () => serverError();
+    await open();
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+
+    listed = held({ status: 'ready', controller_agent: null, lease_expires_at: null, version: 4 });
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'error', code: 'lease_required', message: 'An active control lease is required' }) });
+    });
+    await advance(40_000);
+
+    expect(renewCalls).toHaveLength(1);
+  });
+
+  it('drops the retry on unmount', async () => {
+    renewHandler = () => serverError();
+    await open();
+    await advance(31_000);
+    cleanup();
+    await advance(40_000);
+    expect(renewCalls).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does not renew from a view-only tab', async () => {
