@@ -89,7 +89,7 @@ Each has a test written first.
 
 ## Lease renewal (backend `POST .../lease/renew`, frontend auto-renew)
 
-The backend added an atomic renew route for the current holder. The page now renews once, halfway through the remaining lease, while it holds a lease on a controlled session over a connected stream with an online worker. The lease length is the same 60 seconds used for claiming. It adopts the returned session (new version) before the next renew or release, refetches on a conflict, remembers a failure for that expiry so there is no retry loop, and then lets the normal expiry transition end control. It never renews from a view-only tab, a failed or detached session, a disconnected stream or an offline worker, and the timer is cleared on unmount. A `lease_renewed` event for this controller's own agent refreshes the session; events for another agent are ignored.
+The backend added an atomic renew route for the current holder. The page now renews once, halfway through the remaining lease, while it holds a lease on a controlled session over a connected stream with an online worker. The lease length is the same 60 seconds used for claiming. It adopts the returned session (new version) before the next renew or release, retries once at three quarters of the lease after a network error or 5xx (never after a 409 or other 4xx), refetches on a conflict, remembers a failure for that expiry so there is no retry loop, and then lets the normal expiry transition end control. It never renews from a view-only tab, a failed or detached session, a disconnected stream or an offline worker, and the timer is cleared on unmount. A `lease_renewed` event for this controller's own agent refreshes the session; events for another agent are ignored.
 
 Real browser run (fixture-shell only, no Claude):
 
@@ -97,9 +97,12 @@ Real browser run (fixture-shell only, no Claude):
 - Afterwards typing `still alive after renewals` reached the worker and `echo:still alive after renewals` came back. The server showed 4 `lease_renewed` events, 1 `lease_claimed` and 0 `lease_released` at that point.
 - The worker was then stopped with SIGTERM. Renewal kept succeeding while the server still counted the worker as online (about 90 seconds). Then one renew returned 409, and the page went to `session detached`, `worker offline`, Take control, with no alert. The backend log shows 7 successful renewals followed by exactly one 409 and no further renew requests.
 
+Lease arithmetic (the countdown, the held-lease check and the renew timing) uses the browser's clock against the server's timestamps, so a client clock more than about 30 seconds off the server shows leases expiring early or late.
+
 Behavior to know: a tab that stays open and connected keeps the lease alive indefinitely, including a hidden tab, until the stream drops, the worker goes away or the user releases control.
 
 ## Open items
 
 - Stale worker expiry is not pushed and the page does not poll, so a dead worker can show as online until the next interaction.
+- Optional idle cutoff: stop renewing after N minutes without local input, so an abandoned open tab does not hold control indefinitely.
 - Distinct controller credentials in (d) and a real tmux profile were not exercised.
