@@ -95,6 +95,20 @@ describe('LiveControlPage lease errors', () => {
     expect(screen.queryByRole('button', { name: 'Release control' })).toBeNull();
   });
 
+  it('does not offer to take control of a failed session', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sessions: [{ ...session, status: 'failed', controller_agent: null, lease_expires_at: null }] }),
+    }));
+    render(
+      <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+        <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('session failed');
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
+  });
+
   describe('naive UTC lease timestamps', () => {
     const naiveUtc = (offsetMs) => new Date(Date.now() + offsetMs).toISOString().replace('Z', '');
     const openLive = (leaseExpiresAt) => {
