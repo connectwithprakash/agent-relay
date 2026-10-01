@@ -27,7 +27,7 @@ Two environment notes. `npm install` failed with E401 on the configured private 
 | (c) Approval banner, dismiss, spinner output, answer | Passed |
 | (d) Second tab sees input from the first and clears its banner | Passed, with a caveat on identity |
 | (e) Worker stopped, then restarted, failed session not resurrected | Passed after two fixes |
-| (f) Console errors | No uncaught errors; two benign 409s and one dev warning |
+| (f) Console errors | No uncaught errors; benign 409s and one dev warning |
 
 ### (a) Typing
 
@@ -78,11 +78,17 @@ Each has a test written first, failing before the fix.
 2. Session badge stale after `worker_unavailable` (`5e50fe8`). The page now refetches the session so the badge and lease follow the server.
 3. Take control offered for a failed session (`4b362ad`). The button is now disabled when the session is failed.
 
-## Not fixed, for follow-up
+## Follow-up fixes on branch `frontend-lease`
 
-- The UI claims a 60 second lease and never renews it or shows a countdown, so control ends silently after a minute.
+Each has a test written first.
+
+- Approval banner is now `role="status"` with `aria-live="polite"`; stream errors stay `role="alert"`, so the two are distinguishable.
+- `MessageList.jsx` and `RelayCard.jsx` now use `parseServerTimestamp`. Tests run under Asia/Kolkata, America/Los_Angeles and UTC. The browser was not used to look at message times; the fix is covered by the component tests only.
+- Worker badge after a live `session_failed` or `session_exited`: the event is posted by the session's own worker, so that worker is online at that moment and "offline" would be the wrong inference. The page marks the session failed at once and then refetches, so the worker badge, version and lease come from the server instead of being guessed.
+- Lease countdown: a `Lease m:ss` badge shows while the page holds the lease on a session that is not failed or detached. At zero the page drops local control and refetches once, with no loop and no timer afterwards. No timer runs for a view-only tab or a failed or detached session, and it stops on unmount. Verified in the real browser: the badge counted down from 0:59 against the real server timestamp, then at expiry the page showed Take control with no error, in the same document, with exactly one session fetch from the page at the expiry second and none afterwards.
+
+## Open items
+
+- Automatic lease renewal is not possible with the current backend. `POST .../claim` returns 409 "Session already has an active control lease" whenever the lease has not expired, including for the agent that holds it. The only workaround, release then claim, is two non-atomic requests with a window in which another controller can take the session and input fails with `lease_required`, and it adds `lease_released` and `lease_claimed` events each cycle, so it was not built. The backend needs either a holder-only extension on `claim` (same agent, unexpired lease, same `expected_version` check, new version, a `lease_renewed` event) or a dedicated renew route. Until then control ends after the lease the page asked for, which is 60 seconds.
 - Stale worker expiry is not pushed and the page does not poll, so a dead worker can show as online until the next interaction.
-- The worker badge stays offline after a restarted worker comes back until the page refetches.
-- Approval banner and error alert share `role="alert"`.
-- Chat message and relay card timestamps (`MessageList.jsx`, `RelayCard.jsx`) use `new Date(timestamp)` on the same offset-less format and may show times shifted by the local offset. Not checked in a browser.
 - Distinct controller credentials in (d) and a real tmux profile were not exercised.

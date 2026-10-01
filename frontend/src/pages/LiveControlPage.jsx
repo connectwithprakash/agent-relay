@@ -27,7 +27,7 @@ const ERROR_FALLBACKS = {
 
 function StreamBadge({ status }) {
   const tone = status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : status === 'revoked' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
 }
 
 function formatRemaining(seconds) {
@@ -36,17 +36,17 @@ function formatRemaining(seconds) {
 
 function LeaseBadge({ seconds }) {
   const tone = seconds <= 10 ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ${tone}`}>Lease {formatRemaining(seconds)}</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ${tone}`}>Lease {formatRemaining(seconds)}</span>;
 }
 
 function SessionBadge({ status }) {
   const tone = status === 'ready' || status === 'controlled' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : status === 'failed' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300';
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>session {status || 'unknown'}</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>session {status || 'unknown'}</span>;
 }
 
 function WorkerBadge({ status }) {
   const tone = status === 'online' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : status === 'revoked' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300';
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>worker {status || 'unknown'}</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>worker {status || 'unknown'}</span>;
 }
 
 export default function LiveControlPage() {
@@ -194,7 +194,7 @@ function LiveControlSession() {
       <main className="mx-auto flex max-w-6xl flex-col gap-4">
         <header className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0"><p className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">Live control</p><h1 className="truncate text-xl font-bold text-slate-900 dark:text-white">{session?.profile || 'Loading session…'}</h1><p className="text-sm text-slate-500 dark:text-slate-400">{sessionId}</p></div>
-          <div className="flex items-center gap-2">{holdsLive && leaseSeconds > 0 && <LeaseBadge seconds={leaseSeconds} />}<SessionBadge status={session?.status} /><WorkerBadge status={session?.worker_status} /><StreamBadge status={status} /><button onClick={reconnect} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Reconnect</button>{lease ? <button onClick={release} className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900">Release control</button> : <button disabled={!session || session.status === 'failed' || session.worker_status !== 'online'} onClick={claim} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Take control</button>}</div>
+          <div className="flex flex-wrap items-center gap-2">{holdsLive && leaseSeconds > 0 && <LeaseBadge seconds={leaseSeconds} />}<SessionBadge status={session?.status} /><WorkerBadge status={session?.worker_status} /><StreamBadge status={status} /><button onClick={reconnect} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold dark:border-slate-700">Reconnect</button>{lease ? <button onClick={release} className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900">Release control</button> : <button disabled={!session || session.status === 'failed' || session.worker_status !== 'online'} onClick={claim} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Take control</button>}</div>
         </header>
         {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{error}</p>}
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-sm">
