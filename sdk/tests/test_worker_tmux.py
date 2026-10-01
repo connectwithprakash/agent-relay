@@ -364,3 +364,27 @@ def test_stream_skips_input_at_or_below_the_persisted_cursor(tmp_path, socket_na
     finally:
         daemon.close()
         ManagedTmuxSession.attach("s1", socket=socket_name, state_dir=state_dir).close()
+
+
+def test_executable_path_with_spaces_and_metacharacters_is_launched_literally(tmp_path, socket_name, state_dir):
+    folder = tmp_path / "my tools; touch injected-marker; true"
+    folder.mkdir()
+    marker = tmp_path / "injected-marker"
+    script = folder / "claude"
+    script.write_text("#!/bin/sh\necho spaced-path-marker\nsleep 30\n")
+    script.chmod(0o755)
+
+    session = ManagedTmuxSession.start(
+        "s1", str(tmp_path), str(script), socket=socket_name, state_dir=state_dir
+    )
+    try:
+        assert "spaced-path-marker" in _read_until(session, "spaced-path-marker")
+        assert not marker.exists()
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("session_id", ["abc\n", "abc\n\n", "", "a b", "a" * 65])
+def test_session_ids_with_trailing_newline_or_bad_shape_are_rejected(tmp_path, socket_name, state_dir, session_id):
+    with pytest.raises(ValueError):
+        ManagedTmuxSession(session_id, tmux="/usr/bin/tmux", socket=socket_name, state_dir=state_dir, capture_cap_bytes=1024)

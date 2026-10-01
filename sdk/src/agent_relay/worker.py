@@ -32,7 +32,7 @@ MIN_ROWS, MAX_ROWS = 5, 200
 TMUX_PROFILE = "claude-code-tmux"
 DEFAULT_TMUX_SOCKET = "agent-relay"
 DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024
-_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _SEND_KEYS_CHUNK_BYTES = 256
 _READ_CHUNK_BYTES = 65536
 _MAX_READ_BYTES = 1024 * 1024
@@ -254,7 +254,7 @@ class ManagedTmuxSession:
     profile = TMUX_PROFILE
 
     def __init__(self, session_id: str, *, tmux: str, socket: str, state_dir: Path, capture_cap_bytes: int):
-        if not _SESSION_ID_PATTERN.match(session_id):
+        if not _SESSION_ID_PATTERN.fullmatch(session_id):
             raise ValueError("Session ID is not safe to use as a tmux session name")
         self.name = f"arelay-{session_id}"
         self._target = f"={self.name}:"
@@ -295,6 +295,7 @@ class ManagedTmuxSession:
         if session._exists():
             raise RuntimeError(f"tmux session {session.name} already exists")
         try:
+            # tmux runs a single command argument through /bin/sh, so the path is quoted.
             # An idle placeholder holds the pane open while capture is attached, so the
             # real command's first bytes are never written before pipe-pane is listening.
             session._run("new-session", "-d", "-s", session.name, "-x", "120", "-y", "40", "-c", str(workdir), "cat")
@@ -303,7 +304,7 @@ class ManagedTmuxSession:
             session._run("set-option", "-g", "default-terminal", "screen-256color")
             session._start_pipe(0)
             session._save_offset()
-            session._run("respawn-pane", "-k", "-t", session._target, "-c", str(workdir), "--", claude)
+            session._run("respawn-pane", "-k", "-t", session._target, "-c", str(workdir), "--", shlex.quote(claude))
         except RuntimeError:
             session.close()
             raise
@@ -450,6 +451,8 @@ class ManagedTmuxSession:
             else:
                 time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
         if chunks:
+            # Delivery is at-most-once: the offset is saved before the caller appends the
+            # output event, so a crash in that window drops these bytes rather than repeating them.
             self._save_offset()
         return self._decoder.decode(b"".join(chunks))
 

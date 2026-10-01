@@ -137,6 +137,8 @@ agent-relay worker-run \
 
 The worker writes a mode-`0600` PID file at `~/.agent-relay/worker.pid`, heartbeats the Relay while it is online, and terminates only PTYs it owns when stopped.
 
+The `claude-code-tmux` profile runs Claude Code inside a tmux session so a restarted worker can re-attach to it; it needs `tmux` installed, plus `--claude-workdir` and `--claude-executable` like `claude-code`. On stop, the worker detaches and leaves the tmux session running. Its output capture files hold raw terminal output, which may contain secrets, as plaintext under `~/.agent-relay/worker` (directory mode `0700`, files `0600`, rotated at 8 MB per generation). They are kept after a detach and removed when the session ends. Use `claude-code-tmux` only on machines you trust.
+
 ### Controller flow
 
 ```bash
