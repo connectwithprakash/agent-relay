@@ -16,7 +16,7 @@ This records a run of the control UI in a real browser against a real backend an
 
 Evidence is DOM reads (`.xterm-rows` text, badge text, `[role=alert]` text), the backend events API read from inside the page, and screenshots taken during the run. Screenshots are not committed.
 
-Two environment notes. `npm install` failed with E401 on the configured private registry, so dependencies were installed with `npm ci --registry https://registry.npmjs.org/`. The lease the UI requests lasts 60 seconds and the UI never renews it, so several steps had to be done quickly or re-claimed.
+Two environment notes. `npm install` failed with E401 on the configured private registry, so dependencies were installed with `npm ci --registry https://registry.npmjs.org/`. The runs in the first sections predate lease renewal: the UI then requested a 60 second lease and never renewed it, so several steps had to be done quickly or re-claimed. See the lease renewal section.
 
 ## Results
 
@@ -87,8 +87,19 @@ Each has a test written first.
 - Worker badge after a live `session_failed` or `session_exited`: the event is posted by the session's own worker, so that worker is online at that moment and "offline" would be the wrong inference. The page marks the session failed at once and then refetches, so the worker badge, version and lease come from the server instead of being guessed.
 - Lease countdown: a `Lease m:ss` badge shows while the page holds the lease on a session that is not failed or detached. At zero the page drops local control and refetches once, with no loop and no timer afterwards. No timer runs for a view-only tab or a failed or detached session, and it stops on unmount. Verified in the real browser: the badge counted down from 0:59 against the real server timestamp, then at expiry the page showed Take control with no error, in the same document, with exactly one session fetch from the page at the expiry second and none afterwards.
 
+## Lease renewal (backend `POST .../lease/renew`, frontend auto-renew)
+
+The backend added an atomic renew route for the current holder. The page now renews once, halfway through the remaining lease, while it holds a lease on a controlled session over a connected stream with an online worker. The lease length is the same 60 seconds used for claiming. It adopts the returned session (new version) before the next renew or release, refetches on a conflict, remembers a failure for that expiry so there is no retry loop, and then lets the normal expiry transition end control. It never renews from a view-only tab, a failed or detached session, a disconnected stream or an offline worker, and the timer is cleared on unmount. A `lease_renewed` event for this controller's own agent refreshes the session; events for another agent are ignored.
+
+Real browser run (fixture-shell only, no Claude):
+
+- Control was held for about 165 seconds, nearly three lease periods. The badge counted down from 0:58 and jumped back to 0:58 about every 30 seconds, with no alert and no reload.
+- Afterwards typing `still alive after renewals` reached the worker and `echo:still alive after renewals` came back. The server showed 4 `lease_renewed` events, 1 `lease_claimed` and 0 `lease_released` at that point.
+- The worker was then stopped with SIGTERM. Renewal kept succeeding while the server still counted the worker as online (about 90 seconds). Then one renew returned 409, and the page went to `session detached`, `worker offline`, Take control, with no alert. The backend log shows 7 successful renewals followed by exactly one 409 and no further renew requests.
+
+Behavior to know: a tab that stays open and connected keeps the lease alive indefinitely, including a hidden tab, until the stream drops, the worker goes away or the user releases control.
+
 ## Open items
 
-- Automatic lease renewal is not possible with the current backend. `POST .../claim` returns 409 "Session already has an active control lease" whenever the lease has not expired, including for the agent that holds it. The only workaround, release then claim, is two non-atomic requests with a window in which another controller can take the session and input fails with `lease_required`, and it adds `lease_released` and `lease_claimed` events each cycle, so it was not built. The backend needs either a holder-only extension on `claim` (same agent, unexpired lease, same `expected_version` check, new version, a `lease_renewed` event) or a dedicated renew route. Until then control ends after the lease the page asked for, which is 60 seconds.
 - Stale worker expiry is not pushed and the page does not poll, so a dead worker can show as online until the next interaction.
 - Distinct controller credentials in (d) and a real tmux profile were not exercised.
