@@ -81,3 +81,5 @@ Use `worker-list` before requesting a session. Only `online` workers may start o
 Controllers receive other controllers' input events live over the stream, and terminal input may contain secrets such as passwords typed at a prompt. Controller tokens are trusted with that input; issue them accordingly.
 
 When the worker posts `session_exited` or `session_failed`, the server marks the session failed, releases the lease and pushes the event live to the session's connected controllers, so they learn of the exit without reconnecting.
+
+A controller keeps control past its lease length by calling `POST /relays/{id}/sessions/{sid}/lease/renew` before the lease expires, passing the current session `version` (each renewal increments it). Renewal is refused with 409 once the lease has expired, if the session is not `controlled`, or while the worker is offline; claim again in those cases. Do not use release then claim to extend a lease: it is not atomic and another controller can take the lease in between.

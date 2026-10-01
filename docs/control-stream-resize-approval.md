@@ -71,3 +71,9 @@ Strings containing lone surrogates must be rejected with `invalid_input` / `inva
 ### Live exit events
 
 `session_exited` and `session_failed` posted by the worker over HTTP are stored as before (status `failed`, version incremented, lease released) and also pushed live to the session's controllers as normal `event` frames, keyed by relay and session.
+
+## Lease renewal
+
+`POST /relays/{relay_id}/sessions/{session_id}/lease/renew` with the claim body `{"lease_seconds": 10..300, "expected_version": N}` extends the caller's own lease in one atomic step. It succeeds only for the relay creator who currently holds an unexpired lease on a `controlled` session whose worker is online, with a matching `expected_version`. The effect is `expires_at = now + lease_seconds`, version incremented, status unchanged, and the response has the same shape as claim. Any other state returns 409 and changes nothing; an expired lease must be claimed again. Two simultaneous renewals with the same `expected_version` succeed exactly once.
+
+A stored `lease_renewed` event with data `{"controller_agent": "<holder>", "expires_at": "<UTC ISO time>"}` is pushed live to the session's connected controllers. Workers cannot post `lease_renewed`.

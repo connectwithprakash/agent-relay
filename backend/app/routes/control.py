@@ -327,6 +327,49 @@ async def claim_control_lease(
     return _session_response(session, lease)
 
 
+@router.post("/relays/{relay_id}/sessions/{session_id}/lease/renew")
+async def renew_control_lease(
+    relay_id: str,
+    session_id: str,
+    req: LeaseRequest,
+    agent_info: dict = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    _require_creator(agent_info)
+    session = _get_session(db, relay_id, session_id)
+    _get_active_worker(db, relay_id, session.worker_id)
+    now = _now()
+    expires_at = now + timedelta(seconds=req.lease_seconds)
+    holder = agent_info["agent_name"]
+    # Both conditional UPDATEs run in one transaction; the first to commit wins
+    # and a concurrent renewal with the same expected_version matches no row.
+    renewed_session = db.query(HarnessSession).filter(
+        HarnessSession.id == session.id,
+        HarnessSession.status == "controlled",
+        HarnessSession.version == req.expected_version,
+    ).update(
+        {"version": HarnessSession.version + 1, "updated_at": now},
+        synchronize_session=False,
+    )
+    renewed_lease = renewed_session and db.query(ControlLease).filter(
+        ControlLease.session_id == session.id,
+        ControlLease.controller_agent == holder,
+        ControlLease.expires_at > now,
+    ).update({"expires_at": expires_at}, synchronize_session=False)
+    if not renewed_session or not renewed_lease:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Lease cannot be renewed; refresh and claim again if needed")
+    event = _event(db, session.id, "lease_renewed", {"controller_agent": holder, "expires_at": expires_at.replace(tzinfo=None).isoformat()})
+    db.commit()
+    db.refresh(session)
+    lease = db.get(ControlLease, session.id)
+    db.refresh(lease)
+    await manager.send_to_role(
+        (relay_id, session_id), "controller", {"type": "event", "event": _event_response(event)}
+    )
+    return _session_response(session, lease)
+
+
 @router.post("/relays/{relay_id}/sessions/{session_id}/input", status_code=status.HTTP_202_ACCEPTED)
 async def send_input(
     relay_id: str,
