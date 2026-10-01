@@ -16,6 +16,11 @@ function hasActiveLease(session, agent) {
   );
 }
 
+const ERROR_FALLBACKS = {
+  invalid_resize: 'The relay rejected the terminal resize.',
+  worker_unavailable: 'The worker is unavailable.',
+};
+
 function StreamBadge({ status }) {
   const tone = status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : status === 'revoked' ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
   return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
@@ -78,7 +83,7 @@ export default function LiveControlPage() {
         void loadSession();
         return;
       }
-      setError(frame.message);
+      setError(frame.message || ERROR_FALLBACKS[frame.code] || 'The relay reported an error.');
       if (frame.code === 'worker_unavailable') setSession((current) => current ? { ...current, worker_status: 'offline' } : current);
     }
   }, [loadSession]);

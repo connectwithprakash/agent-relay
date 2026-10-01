@@ -92,4 +92,12 @@ describe('LiveControlPage approval and resize', () => {
     fireEvent.click(screen.getByText('mock resize'));
     expect(sockets[0].send).toHaveBeenCalledWith(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
   });
+
+  it('surfaces an invalid_resize error without a message and keeps the terminal and lease', async () => {
+    await open();
+    act(() => sockets[0].onmessage({ data: JSON.stringify({ type: 'error', code: 'invalid_resize' }) }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/resize/i);
+    expect(screen.getByLabelText('Live managed terminal')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Release control' })).toBeInTheDocument();
+  });
 });

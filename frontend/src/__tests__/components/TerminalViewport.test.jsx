@@ -69,7 +69,7 @@ describe('TerminalViewport', () => {
       expect(onResize).toHaveBeenCalledWith(110, 32);
     });
 
-    it.each([[19, 24], [501, 24], [80, 4], [80, 201], [80.5, 24]])('ignores out of bounds size %s x %s', (cols, rows) => {
+    it.each([[19, 24], [501, 24], [80, 4], [80, 201], [80.5, 24], [true, 24], [80, true], ['80', '24']])('ignores out of bounds size %s x %s', (cols, rows) => {
       const { onResize, terminal } = setup();
       onResize.mockClear();
       emit(terminal, cols, rows);
