@@ -34,6 +34,7 @@ export default function LiveControlPage() {
   const [lease, setLease] = useState(false);
   const [terminal, setTerminal] = useState('');
   const [input, setInput] = useState('');
+  const [approvalPrompt, setApprovalPrompt] = useState(null);
   const [error, setError] = useState('');
 
 
@@ -63,7 +64,13 @@ export default function LiveControlPage() {
 
   const onFrame = useCallback((frame) => {
     if (frame.type === 'connected') setLease(Boolean(frame.lease?.held));
-    if (frame.type === 'event' && frame.event?.kind === 'output') setTerminal((current) => current + (frame.event.data?.text || ''));
+    if (frame.type === 'event' && frame.event?.kind === 'output') {
+      setTerminal((current) => current + (frame.event.data?.text || ''));
+      setApprovalPrompt(null);
+    }
+    if (frame.type === 'event' && frame.event?.kind === 'approval_requested' && frame.event.data?.prompt) {
+      setApprovalPrompt(frame.event.data.prompt);
+    }
     if (frame.type === 'error') {
       if (frame.code === 'lease_required') {
         setLease(false);
@@ -76,7 +83,7 @@ export default function LiveControlPage() {
     }
   }, [loadSession]);
 
-  const { status, sendInput, reconnect } = useControlStream({
+  const { status, sendInput, sendResize, reconnect } = useControlStream({
     url: token ? `${wsBase}/relays/${relayId}/sessions/${sessionId}/stream` : '',
     token,
     onEvent: onFrame,
@@ -143,7 +150,7 @@ export default function LiveControlPage() {
         {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{error}</p>}
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-sm">
           <div className="border-b border-slate-800 px-4 py-2 text-xs font-medium text-slate-400">Terminal output · durable replay on reconnect</div>
-          <TerminalViewport output={terminal} inputEnabled={lease && status === 'connected' && session?.worker_status === 'online'} onInput={sendTerminalInput} />
+          <TerminalViewport output={terminal} inputEnabled={lease && status === 'connected' && session?.worker_status === 'online'} onInput={sendTerminalInput} onResize={sendResize} approvalPrompt={approvalPrompt} onDismissApproval={() => setApprovalPrompt(null)} />
         </section>
         <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row"><label className="sr-only" htmlFor="terminal-input">Terminal input</label><input id="terminal-input" value={input} onChange={(event) => setInput(event.target.value)} disabled={!lease || status !== 'connected' || session?.worker_status !== 'online'} placeholder={session?.worker_status !== 'online' ? 'Worker is unavailable' : lease ? 'Type terminal input…' : 'Take control to send input'} className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 font-mono text-sm text-slate-900 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:disabled:bg-slate-800"/><button disabled={!lease || !input || status !== 'connected' || session?.worker_status !== 'online'} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Send</button></form>
       </main>

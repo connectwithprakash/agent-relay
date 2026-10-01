@@ -34,4 +34,23 @@ describe('useControlStream', () => {
     expect(result.current.status).toBe('revoked');
     unmount();
   });
+
+  it('sends resize frames only while the socket is open', () => {
+    const sockets = [];
+    class FakeWebSocket {
+      static OPEN = 1;
+      readyState = FakeWebSocket.OPEN;
+      constructor() { sockets.push(this); }
+      close = vi.fn();
+      send = vi.fn();
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const { result } = renderHook(() => useControlStream({ url: 'ws://relay/s/stream', token: 't', onEvent: vi.fn() }));
+
+    expect(result.current.sendResize(100, 30)).toBe(true);
+    expect(sockets[0].send).toHaveBeenCalledWith(JSON.stringify({ type: 'resize', cols: 100, rows: 30 }));
+    sockets[0].readyState = 3;
+    expect(result.current.sendResize(100, 30)).toBe(false);
+    expect(sockets[0].send).toHaveBeenCalledTimes(1);
+  });
 });
