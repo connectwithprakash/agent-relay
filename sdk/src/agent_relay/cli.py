@@ -1,5 +1,6 @@
 """Agent Relay CLI for creating, joining, and managing relays."""
 import os
+import shutil
 import signal
 import time
 from pathlib import Path
@@ -15,7 +16,7 @@ import httpx
 from .client import AgentRelayClient
 from .exceptions import AgentRelayError
 from .config import save_config, load_config, DEFAULT_SERVER
-from .worker import WorkerDaemon
+from .worker import TMUX_PROFILE, WorkerDaemon
 
 
 @click.group()
@@ -189,8 +190,8 @@ def _serve_worker_setup(worker_name: str, profiles: tuple[str, ...], workdir: Op
 
 @main.command("worker-run")
 @click.option("--name", "worker_name", required=True, help="Local display name for this worker")
-@click.option("--profile", "profiles", multiple=True, type=click.Choice(["fixture-shell", "claude-code"]), required=True)
-@click.option("--claude-workdir", type=click.Path(path_type=Path), help="Fixed local directory for the claude-code profile")
+@click.option("--profile", "profiles", multiple=True, type=click.Choice(["fixture-shell", "claude-code", "claude-code-tmux"]), required=True)
+@click.option("--claude-workdir", type=click.Path(path_type=Path), help="Fixed local directory for the claude-code profiles")
 @click.option("--claude-executable", type=click.Path(path_type=Path), help="Absolute local Claude Code executable path")
 @click.option("--poll-seconds", default=0.2, show_default=True, type=click.FloatRange(min=0.05))
 @click.option("--pid-file", default="~/.agent-relay/worker.pid", type=click.Path(path_type=Path), show_default=True)
@@ -198,11 +199,14 @@ def _serve_worker_setup(worker_name: str, profiles: tuple[str, ...], workdir: Op
 @click.option("--setup-port", default=8765, type=click.IntRange(1024, 65535), show_default=True, help="Local setup page port when this Worker is unpaired")
 def worker_run(worker_name, profiles, claude_workdir, claude_executable, poll_seconds, pid_file, config_dir, setup_port):
     """Run one locally configured, gracefully stoppable worker daemon."""
-    if "claude-code" in profiles:
+    claude_profiles = [name for name in profiles if name in {"claude-code", TMUX_PROFILE}]
+    for name in claude_profiles:
         if not claude_workdir or not claude_workdir.is_absolute() or not claude_workdir.is_dir():
-            raise click.ClickException("claude-code requires an existing absolute --claude-workdir")
+            raise click.ClickException(f"{name} requires an existing absolute --claude-workdir")
         if not claude_executable or not claude_executable.is_absolute() or not os.access(claude_executable, os.X_OK):
-            raise click.ClickException("claude-code requires an executable absolute --claude-executable")
+            raise click.ClickException(f"{name} requires an executable absolute --claude-executable")
+    if TMUX_PROFILE in profiles and not shutil.which("tmux"):
+        raise click.ClickException(f"{TMUX_PROFILE} requires tmux to be installed")
     config_dir = config_dir or Path.cwd()
     try:
         config = load_config(str(config_dir))
@@ -218,8 +222,8 @@ def worker_run(worker_name, profiles, claude_workdir, claude_executable, poll_se
     client = AgentRelayClient(config["server"], token=config["token"])
     daemon = WorkerDaemon(
         client, config["relay_id"], worker_name, list(profiles),
-        profile_workdirs={"claude-code": str(claude_workdir)} if claude_workdir else {},
-        profile_executables={"claude-code": str(claude_executable)} if claude_executable else {},
+        profile_workdirs={name: str(claude_workdir) for name in claude_profiles},
+        profile_executables={name: str(claude_executable) for name in claude_profiles},
     )
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -297,7 +301,7 @@ def session_list(config_dir):
 
 @main.command("session-start")
 @click.argument("worker_id")
-@click.argument("profile", type=click.Choice(["fixture-shell", "claude-code"]))
+@click.argument("profile", type=click.Choice(["fixture-shell", "claude-code", "claude-code-tmux"]))
 @click.option("--idempotency-key", help="Stable retry key for this session request")
 @click.option("--config-dir", type=click.Path(path_type=Path), help="Directory containing .agent-relay.json")
 def session_start(worker_id, profile, idempotency_key, config_dir):
