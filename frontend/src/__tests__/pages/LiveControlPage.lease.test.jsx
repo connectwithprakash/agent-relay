@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, configure, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +7,9 @@ vi.mock('../../components/TerminalViewport', () => ({
 }));
 
 import LiveControlPage from '../../pages/LiveControlPage';
+
+// A cold first render can take longer than the 1000 ms default; these waits are not racing a timer.
+configure({ asyncUtilTimeout: 5000 });
 
 const session = {
   session_id: 'session-1',
