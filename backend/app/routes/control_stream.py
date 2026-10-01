@@ -5,13 +5,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..database import SessionLocal
 from ..models import AgentToken, ControlEvent, ControlLease, HarnessSession, Worker
-from ..schemas import validate_approval_data
+from ..schemas import utf8_size, validate_approval_data
 from ..security import digest
 from ..control_stream_manager import manager
 from .control import _as_utc, _event, _event_response, _expire_stale_workers, _now
 
 router = APIRouter()
 
+MAX_FRAME_TEXT_BYTES = 65536
 RESIZE_COLS = (20, 500)
 RESIZE_ROWS = (5, 200)
 
@@ -102,16 +103,17 @@ async def control_stream(websocket: WebSocket, relay_id: str, session_id: str, c
                         await manager.send_to_role(key, "worker", {"type": "event", "event": _event_response(event)})
                         continue
                     value = frame.get("input")
-                    if not isinstance(value, str) or not value or len(value.encode()) > 65536:
+                    if not isinstance(value, str) or not value or (utf8_size(value) or MAX_FRAME_TEXT_BYTES + 1) > MAX_FRAME_TEXT_BYTES:
                         await websocket.send_json({"type": "error", "code": "invalid_input", "message": "Input must be non-empty UTF-8 text up to 64 KB"})
                         continue
                     event = _event(db, session.id, "input_requested", {"input": value})
                     db.commit()
                     payload = {"type": "event", "event": _event_response(event)}
                     await manager.send_to_role(key, "worker", payload)
+                    await manager.send_to_role(key, "controller", payload, exclude=websocket)
                 elif role == "worker" and frame_type == "output":
                     value = frame.get("text")
-                    if not isinstance(value, str) or len(value.encode()) > 65536:
+                    if not isinstance(value, str) or (utf8_size(value) or MAX_FRAME_TEXT_BYTES + 1) > MAX_FRAME_TEXT_BYTES:
                         await websocket.send_json({"type": "error", "code": "invalid_output", "message": "Output must be UTF-8 text up to 64 KB"})
                         continue
                     event = _event(db, session.id, "output", {"text": value})

@@ -4,7 +4,7 @@
 
 The worker accepts only the fixed `claude-code` profile, the fixed local workdir, and the fixed local executable in the prepared plist. Relay requests select a profile only; they never supply a command, executable, or path. The credential remains in the owner-only `/Users/bodhi/agent-relay-service/.agent-relay.json`; do not put it in a plist, log, shell history, or ticket.
 
-Workers report `online`, `offline`, or `revoked`. The server marks an online worker offline when its persisted `last_seen` exceeds `worker_stale_seconds` (90 seconds by default), releases any lease, and detaches sessions. A successful heartbeat or re-registration recovers that worker to `online`; detached sessions are not resurrected, so request a new session after recovery. A revoked worker cannot recover.
+Workers report `online`, `offline`, or `revoked`. The server marks an online worker offline when its persisted `last_seen` exceeds `worker_stale_seconds` (90 seconds by default), releases any lease, and detaches sessions. A successful heartbeat or re-registration recovers that worker to `online`; detached sessions are not resurrected automatically. The one exception is adoption: a tmux-backed session that outlived its worker process can be reclaimed when the restarted worker finds it alive and posts a `session_adopted` event. The server accepts it only from the session's own worker, while that worker is `online` and the session is `detached`, and moves the session to `ready` with a new version; any other state returns 409 and changes nothing. Failed sessions are never adopted and leases are not restored, so a controller claims a new lease. Without a live tmux session, request a new session after recovery. A revoked worker cannot recover.
 
 ## Runtime sequence
 

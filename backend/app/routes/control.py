@@ -350,6 +350,9 @@ async def send_input(
     event = _event(db, session.id, "input_requested", {"input": req.input})
     db.commit()
     db.refresh(event)
+    await manager.send_to_role(
+        (relay_id, session_id), "controller", {"type": "event", "event": _event_response(event)}
+    )
     return {"event": _event_response(event), "version": session.version}
 
 
@@ -362,7 +365,16 @@ async def append_worker_event(
     db: Session = Depends(get_db),
 ):
     session = _get_session(db, relay_id, session_id)
-    _require_session_worker(db, session, agent_info["agent_name"])
+    worker = _require_session_worker(db, session, agent_info["agent_name"])
+    if req.kind == "session_adopted":
+        _expire_stale_workers(db, relay_id)
+        db.refresh(worker)
+        db.refresh(session)
+        if worker.status != "online" or session.status != "detached":
+            raise HTTPException(status_code=409, detail="Only a detached session of an online worker can be adopted")
+        session.status = "ready"
+        session.version += 1
+        session.updated_at = _now()
     if req.kind in {"session_exited", "session_failed"}:
         session.status = "failed"
         session.version += 1
@@ -376,7 +388,7 @@ async def append_worker_event(
     db.commit()
     db.refresh(event)
     response = {"event": _event_response(event), "version": session.version}
-    if req.kind in {"output", "approval_requested"}:
+    if req.kind in {"output", "approval_requested", "session_adopted"}:
         await manager.send_to_role(
             (relay_id, session_id),
             "controller",
