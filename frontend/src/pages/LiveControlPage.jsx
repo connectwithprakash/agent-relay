@@ -109,7 +109,10 @@ function LiveControlSession() {
         return;
       }
       setError(frame.message || ERROR_FALLBACKS[frame.code] || 'The relay reported an error.');
-      if (frame.code === 'worker_unavailable') setSession((current) => current ? { ...current, worker_status: 'offline' } : current);
+      if (frame.code === 'worker_unavailable') {
+        setSession((current) => current ? { ...current, worker_status: 'offline' } : current);
+        void loadSession();
+      }
     }
   }, [loadSession, setSession]);
 

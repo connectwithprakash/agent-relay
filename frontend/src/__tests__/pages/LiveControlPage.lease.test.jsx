@@ -69,6 +69,32 @@ describe('LiveControlPage lease errors', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   });
 
+  it('refreshes the session when the worker becomes unavailable so the badge and lease follow the server', async () => {
+    const held = { ...session, status: 'controlled' };
+    const detached = { ...session, status: 'detached', worker_status: 'offline', controller_agent: null, lease_expires_at: null, version: 4 };
+    const responses = [held, detached];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ sessions: [responses.length > 1 ? responses.shift() : responses[0]] }),
+    })));
+    render(
+      <MemoryRouter initialEntries={['/relay/relay-1/sessions/session-1/live']}>
+        <Routes><Route path="/relay/:relayId/sessions/:sessionId/live" element={<LiveControlPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole('button', { name: 'Release control' });
+    expect(screen.getByText('session controlled')).toBeInTheDocument();
+
+    act(() => sockets[0].onmessage({
+      data: JSON.stringify({ type: 'error', code: 'worker_unavailable', message: 'Worker is unavailable' }),
+    }));
+
+    expect(await screen.findByText('session detached')).toBeInTheDocument();
+    expect(screen.getByText('worker offline')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Release control' })).toBeNull();
+  });
+
   describe('naive UTC lease timestamps', () => {
     const naiveUtc = (offsetMs) => new Date(Date.now() + offsetMs).toISOString().replace('Z', '');
     const openLive = (leaseExpiresAt) => {
