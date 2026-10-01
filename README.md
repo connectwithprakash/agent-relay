@@ -160,6 +160,31 @@ For the browser UI, create a short-lived controller-browser invitation with `age
 
 After a browser controller is paired, its Home page exposes **Your workers → Manage workers** and the header exposes **Workers** when one controller relay is saved. The Controller dashboard can create and copy one-time codes for another browser or an unpaired work-computer participant. A work-computer code is redeemed by the installed local Worker app; that native component alone owns the approved local Claude executable and worktree.
 
+### Terminal resize
+
+The browser terminal reports its size over the control stream after a 150 ms debounce, only while the stream is connected and the controller holds the lease, and only for whole numbers within 20 to 500 columns and 5 to 200 rows. The worker applies the size to the PTY or tmux window and sends no reply. Rejected sizes come back as an `invalid_resize` error frame, which the page shows without disturbing the terminal.
+
+### Approval banner
+
+When the worker recognizes a Claude Code permission prompt in the terminal output, it reports it once as an `approval_requested` event and the live page shows the prompt text in a banner above the terminal. The banner has only a Dismiss button; the controller answers by typing into the terminal or the input box, which uses the normal input path. It clears on Dismiss, when a newer approval arrives, when you send input from the page, or when a later `input_requested` event is seen. Ordinary terminal redraws do not clear it.
+
+### tmux profile
+
+`claude-code-tmux` is a second allowlisted profile that runs Claude Code inside a tmux session, so the session can outlive a worker restart. It needs tmux on the worker device and the same `--claude-workdir` and `--claude-executable` settings as `claude-code`. When the restarted worker finds the tmux session alive it reports `session_adopted`; a detached session then returns to `ready` and a controller claims a new lease. A failed session is never resurrected.
+
+### Control stream frames
+
+| Direction | Frame or request | Stored event kind | Notes |
+|---|---|---|---|
+| Controller to worker | `{"type":"input","input":"..."}` | `input_requested` | Needs an active lease. Also pushed to other connected controllers. |
+| Controller to worker | `{"type":"resize","cols":N,"rows":N}` | `resize_requested` | Needs an active lease. Integers only, cols 20 to 500, rows 5 to 200. |
+| Worker to controller | `{"type":"output","text":"..."}` | `output` | Terminal bytes as text. |
+| Worker to controller | `{"type":"approval","prompt":"..."}` | `approval_requested` | Non-empty string, at most 4096 bytes. |
+| Worker to server (HTTP) | event `session_adopted` | `session_adopted` | Only accepted for a detached session from its own online worker. |
+| Server to controller | `{"type":"error","code":"..."}` | none | Codes: `invalid_resize`, `invalid_input`, `invalid_output`, `invalid_approval`, `invalid_frame`, `lease_required`, `worker_unavailable`. |
+
+The full contract is in `docs/control-stream-resize-approval.md`.
+
 ### Browser-to-worker sequence
 
 ```mermaid

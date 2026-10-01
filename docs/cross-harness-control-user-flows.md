@@ -142,34 +142,38 @@ sequenceDiagram
 
 ### User goal
 
-A remote harness pauses safely when it needs permission, and the authorized controller or human can approve or reject with context.
+A remote harness pauses safely when it needs permission, and the authorized controller or human can see the exact prompt and answer it from the live control page.
 
 ```mermaid
 sequenceDiagram
-    participant H as Harness session
-    participant W as Worker daemon
+    participant H as Claude Code PTY or tmux
+    participant W as Worker
     participant R as Agent Relay
-    participant C as Controller harness
+    participant B as Browser controller
     actor User
 
-    H-->>W: Approval required with requested action
-    W->>R: Create approval request and paused event
-    R-->>C: Approval notification
-    C-->>User: Present requested action and policy context
-    User->>C: Approve or reject
-    C->>R: Submit approval decision
-    R->>R: Authorize responder and persist decision event
-    R-->>W: Deliver decision
-    W->>H: Resume or cancel requested action
-    W->>R: Append resulting state event
+    H-->>W: Terminal output containing a permission prompt
+    W->>R: output (unchanged stream)
+    W->>R: approval frame, once per prompt
+    R-->>B: approval_requested event with prompt text
+    B-->>User: Approval banner above the terminal
+    User->>B: Type the answer in the terminal or input box
+    B->>R: input frame (existing input path, needs lease)
+    R->>W: input_requested event
+    R-->>B: input_requested event (clears the banner)
+    W->>H: Write the answer to the terminal
+    H-->>W: Resulting output
+    W->>R: output
+    R-->>B: output
 ```
 
 ### Contract
 
-- The approval identifies the requested action, target, policy context, and expiry.
-- Only explicitly permitted actors can respond.
-- An expired approval leaves the task/session in an honest paused, cancelled, or failed state according to policy.
-- The decision and resulting action are separately recorded.
+- Detection belongs to the worker. It matches known Claude Code permission prompts, reports each prompt once, and never alters the `output` stream.
+- The prompt is a non-empty string of at most 4096 bytes. The browser renders it as plain text and ignores any other payload.
+- There is no approve or reject frame. The controller answers with ordinary `input`, so only the holder of an active lease can respond.
+- The banner clears when the user dismisses it, when a newer approval arrives, when the user sends input from the page, or when a later `input_requested` event is seen. Terminal redraws such as spinners do not clear it, and a replay that ends with `input_requested` leaves no stale banner.
+- The text of an `input_requested` event is never displayed or echoed into the terminal by the browser.
 
 ---
 
