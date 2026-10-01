@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+import httpx
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as connect_websocket
 
 from .exceptions import AgentRelayError
@@ -49,6 +51,7 @@ _ROTATION_GRACE_SECONDS = 0.3
 _EXIT_DRAIN_SECONDS = 0.2
 _ADOPTION_RETRY_START_SECONDS = 1.0
 _ADOPTION_RETRY_MAX_SECONDS = 30.0
+_RECONNECT_START_SECONDS = 1.0
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -563,7 +566,7 @@ class WorkerDaemon:
         """Tell the backend a detached session is back, retrying with backoff until accepted.
 
         A 409 means the session already moved on, so the report is dropped. Any other
-        failure is logged when it first appears or changes, and retried after a delay that
+        failure, including a transport error, is logged when it first appears or changes, and retried after a delay that
         doubles from one to thirty seconds so a permanent failure stays quiet and cheap.
         """
         pending = self._adoption_pending.get(session_id)
@@ -571,11 +574,12 @@ class WorkerDaemon:
             return
         try:
             self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
-        except AgentRelayError as error:
-            if error.status_code != 409:
-                if str(error) != pending.last_error:
-                    print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
-                    pending.last_error = str(error)
+        except (AgentRelayError, httpx.HTTPError) as error:
+            if getattr(error, "status_code", None) != 409:
+                description = f"{type(error).__name__}: {error}" if isinstance(error, httpx.HTTPError) else str(error)
+                if description != pending.last_error:
+                    print(f"Could not report adoption of {session_id}, will retry: {description}", file=sys.stderr)
+                    pending.last_error = description
                 pending.next_attempt = self.clock() + pending.delay
                 pending.delay = min(pending.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
                 return
@@ -676,8 +680,27 @@ class WorkerDaemon:
         self._approval_detectors.clear()
         self._adoption_pending.clear()
 
+    def run_stream_with_reconnect(self, session_id: str, *, max_attempts: int = 5, sleep=time.sleep, **stream_options) -> None:
+        """Run the live stream, reconnecting with doubling backoff up to max_attempts connections."""
+        delay = _RECONNECT_START_SECONDS
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.stream_owned_session(session_id, **stream_options)
+            except (ConnectionClosed, OSError) as error:
+                session = self._sessions.get(session_id)
+                if attempt == max_attempts or session is None or session.closed:
+                    raise
+                print(f"Stream for {session_id} dropped ({type(error).__name__}), reconnecting in {delay:g}s", file=sys.stderr)
+                sleep(delay)
+                delay = min(delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
+
     def stream_owned_session(self, session_id: str, *, max_frames: int | None = None, connection_factory=connect_websocket) -> None:
-        """Bridge one owned PTY over the authenticated per-session live stream."""
+        """Bridge one owned PTY over the authenticated per-session live stream.
+
+        A dropped or refused connection raises (for example ConnectionClosedError) by
+        design; this method never reconnects. worker-run uses the polling path, and a
+        caller that wants a live stream owns reconnects, see run_stream_with_reconnect.
+        """
         if not self.worker_id or session_id not in self._sessions:
             raise RuntimeError("Worker does not own this managed session")
         token = getattr(self.client, "_token", None)
