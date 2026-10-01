@@ -20,11 +20,20 @@ from urllib.parse import urlparse, urlunparse
 
 from websockets.sync.client import connect as connect_websocket
 
+from .exceptions import AgentRelayError
 
-_FIXTURE_PROGRAM = """import sys
+
+_FIXTURE_PROGRAM = """import os, sys
 print('fixture ready', flush=True)
 for line in sys.stdin:
-    print('echo:' + line.rstrip('\\r\\n'), flush=True)
+    text = line.rstrip('\\r\\n')
+    if text == 'size':
+        columns, rows = os.get_terminal_size(sys.stdout.fileno())
+        print(f'size:{columns}x{rows}', flush=True)
+    elif text == 'approval':
+        print('Do you want to proceed?\\n  > 1. Yes\\n    2. No', flush=True)
+    else:
+        print('echo:' + text, flush=True)
 """
 
 MIN_COLS, MAX_COLS = 20, 500
@@ -38,6 +47,8 @@ _READ_CHUNK_BYTES = 65536
 _MAX_READ_BYTES = 1024 * 1024
 _ROTATION_GRACE_SECONDS = 0.3
 _EXIT_DRAIN_SECONDS = 0.2
+_ADOPTION_RETRY_START_SECONDS = 1.0
+_ADOPTION_RETRY_MAX_SECONDS = 30.0
 MAX_APPROVAL_PROMPT_BYTES = 4096
 _APPROVAL_BUFFER_CHARS = 8192
 
@@ -166,19 +177,24 @@ class ManagedPtySession:
             raise RuntimeError("Managed PTY session is not running")
         fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+    @property
+    def closed(self) -> bool:
+        """True once close() has released the PTY."""
+        return self.master_fd < 0
+
     def read(self, timeout: float = 0.0) -> str:
         """Read currently available terminal output, waiting at most timeout seconds."""
         deadline = time.monotonic() + timeout
         chunks: list[bytes] = []
         while True:
             remaining = max(0.0, deadline - time.monotonic())
-            readable, _, _ = select.select([self.master_fd], [], [], remaining)
-            if not readable:
-                break
             try:
+                readable, _, _ = select.select([self.master_fd], [], [], remaining)
+                if not readable:
+                    break
                 chunk = os.read(self.master_fd, 65536)
-            except OSError:
-                break
+            except (ValueError, OSError):
+                break  # closed underneath a concurrent reader
             if not chunk:
                 break
             chunks.append(chunk)
@@ -377,6 +393,11 @@ class ManagedTmuxSession:
         """Expand a tmux format string against this session's pane."""
         return self._run("display-message", "-p", "-t", self._target, template).stdout.strip()
 
+    @property
+    def closed(self) -> bool:
+        """True once the session was closed or detached by this worker."""
+        return self._ended
+
     def poll(self) -> int | None:
         """Return the command's exit code once it has ended, else None."""
         if self._ended:
@@ -481,10 +502,19 @@ class ManagedTmuxSession:
             path.unlink(missing_ok=True)
 
 
+@dataclass
+class _PendingAdoption:
+    """Retry state for one session_adopted report that the backend has not accepted."""
+
+    next_attempt: float = 0.0
+    delay: float = _ADOPTION_RETRY_START_SECONDS
+    last_error: str | None = None
+
+
 class WorkerDaemon:
     """Bridge authenticated control events to worker-owned managed PTYs."""
 
-    def __init__(self, client, relay_id: str, name: str, profiles: list[str], profile_workdirs: dict[str, str] | None = None, profile_executables: dict[str, str] | None = None, state_dir: Path | str | None = None, tmux_path: str | None = None, tmux_socket: str = DEFAULT_TMUX_SOCKET):
+    def __init__(self, client, relay_id: str, name: str, profiles: list[str], profile_workdirs: dict[str, str] | None = None, profile_executables: dict[str, str] | None = None, state_dir: Path | str | None = None, tmux_path: str | None = None, tmux_socket: str = DEFAULT_TMUX_SOCKET, clock=time.monotonic):
         self.client = client
         self.relay_id = relay_id
         self.name = name
@@ -494,10 +524,12 @@ class WorkerDaemon:
         self.state_dir = state_dir
         self.tmux_path = tmux_path
         self.tmux_socket = tmux_socket
+        self.clock = clock
         self.worker_id: str | None = None
         self._sessions: dict[str, ManagedPtySession | ManagedTmuxSession] = {}
         self._cursors: dict[str, int] = {}
         self._approval_detectors: dict[str, ApprovalDetector] = {}
+        self._adoption_pending: dict[str, _PendingAdoption] = {}
 
     def _tmux_options(self) -> dict:
         return {"tmux_path": self.tmux_path, "socket": self.tmux_socket, "state_dir": self.state_dir}
@@ -523,7 +555,31 @@ class WorkerDaemon:
         if adopted is not None:
             self._sessions[session_id] = adopted
             self._cursors[session_id] = adopted.load_cursor()
+            if session["status"] == "detached":
+                self._adoption_pending[session_id] = _PendingAdoption()
         return adopted
+
+    def _report_pending_adoption(self, session_id: str) -> None:
+        """Tell the backend a detached session is back, retrying with backoff until accepted.
+
+        A 409 means the session already moved on, so the report is dropped. Any other
+        failure is logged when it first appears or changes, and retried after a delay that
+        doubles from one to thirty seconds so a permanent failure stays quiet and cheap.
+        """
+        pending = self._adoption_pending.get(session_id)
+        if pending is None or self.clock() < pending.next_attempt:
+            return
+        try:
+            self.client.append_session_event(self.relay_id, session_id, "session_adopted", {})
+        except AgentRelayError as error:
+            if error.status_code != 409:
+                if str(error) != pending.last_error:
+                    print(f"Could not report adoption of {session_id}, will retry: {error}", file=sys.stderr)
+                    pending.last_error = str(error)
+                pending.next_attempt = self.clock() + pending.delay
+                pending.delay = min(pending.delay * 2, _ADOPTION_RETRY_MAX_SECONDS)
+                return
+        del self._adoption_pending[session_id]
 
     def _relay_output(self, session_id: str, output: str) -> None:
         """Append terminal output as an event and report any permission prompts it completes."""
@@ -585,6 +641,7 @@ class WorkerDaemon:
             pty_session = self._sessions.get(session_id)
             if not pty_session:
                 continue
+            self._report_pending_adoption(session_id)
             exit_code = pty_session.poll()
             if exit_code is not None:
                 self._relay_output(session_id, pty_session.read(timeout=_EXIT_DRAIN_SECONDS))
@@ -597,6 +654,7 @@ class WorkerDaemon:
                 pty_session.close()
                 del self._sessions[session_id]
                 self._approval_detectors.pop(session_id, None)
+                self._adoption_pending.pop(session_id, None)
                 continue
             events = self.client.get_session_events(
                 self.relay_id, session_id, self._cursors.get(session_id, 0)
@@ -616,6 +674,7 @@ class WorkerDaemon:
             session.detach()
         self._sessions.clear()
         self._approval_detectors.clear()
+        self._adoption_pending.clear()
 
     def stream_owned_session(self, session_id: str, *, max_frames: int | None = None, connection_factory=connect_websocket) -> None:
         """Bridge one owned PTY over the authenticated per-session live stream."""
@@ -631,7 +690,7 @@ class WorkerDaemon:
         pty_session = self._sessions[session_id]
         try:
             with connection_factory(stream_url, subprotocols=[f"token-{token}"]) as websocket:
-                while max_frames is None or processed < max_frames:
+                while (max_frames is None or processed < max_frames) and not pty_session.closed:
                     try:
                         raw = websocket.recv(timeout=0.05)
                     except TimeoutError:

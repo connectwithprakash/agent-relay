@@ -2,7 +2,9 @@
 
 import fcntl
 import json
+import shlex
 import struct
+import sys
 import termios
 import time
 import pytest
@@ -440,5 +442,131 @@ def test_run_once_flushes_remaining_output_before_reporting_exit():
         assert kinds[-1] == "session_exited"
         text = "".join(data["text"] for _, _, kind, data in client.output_events if kind == "output")
         assert "echo:last words" in text
+    finally:
+        daemon.close()
+
+
+_BURST_PROGRAM = """import sys, time
+sys.stdout.write('x' * 300000)
+sys.stdout.flush()
+time.sleep(0.1)
+sys.stdout.write('y' * 200 + '\\nEND-OF-BURST\\n')
+sys.stdout.flush()
+"""
+
+
+def _run_burst_session(tmp_path, read_delay=0.0):
+    script = tmp_path / "claude"
+    script.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -u -c {shlex.quote(_BURST_PROGRAM)}\n")
+    script.chmod(0o755)
+
+    class BurstClient(_FakeControlClient):
+        def register_worker(self, relay_id, name, profiles):
+            return {"worker_id": "worker-1"}
+
+        def list_worker_sessions(self, relay_id, worker_id):
+            return [{"session_id": "session-1", "profile": "claude-code", "status": "starting"}]
+
+        def get_session_events(self, relay_id, session_id, after_sequence=0):
+            return []
+
+    client = BurstClient()
+    daemon = WorkerDaemon(
+        client, "relay-1", "Personal Mac", ["claude-code"],
+        profile_workdirs={"claude-code": str(tmp_path)},
+        profile_executables={"claude-code": str(script)},
+    )
+    try:
+        daemon.start()
+        deadline = time.monotonic() + 20.0
+        while "session_exited" not in [e[2] for e in client.output_events] and time.monotonic() < deadline:
+            daemon.run_once()
+            time.sleep(read_delay)
+    finally:
+        daemon.close()
+    return client
+
+
+def test_output_larger_than_the_pty_buffer_survives_an_immediate_exit(tmp_path):
+    # The tail is written after the worker has gone quiet and the child exits before the next
+    # poll, so only a worker that keeps the PTY slave open can still read it.
+    client = _run_burst_session(tmp_path, read_delay=0.25)
+
+    kinds = [e[2] for e in client.output_events]
+    assert kinds[-1] == "session_exited"
+    text = "".join(d["text"] for _, _, kind, d in client.output_events if kind == "output")
+    assert text.count("x") == 300000
+    assert text.count("y") == 200
+    assert text.rstrip().endswith("END-OF-BURST")
+
+
+def test_output_written_before_exit_is_kept_when_nobody_reads_until_after_the_child_ends(tmp_path):
+    program = "import sys; sys.stdout.write('y' * 200 + '\\nEND-OF-OUTPUT\\n'); sys.stdout.flush()"
+    script = tmp_path / "claude"
+    script.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c {shlex.quote(program)}\n")
+    script.chmod(0o755)
+    session = ManagedPtySession.start("claude-code", str(tmp_path), str(script))
+    try:
+        time.sleep(0.5)  # the child writes and exits while nothing is reading
+        collected = ""
+        deadline = time.monotonic() + 5.0
+        while "END-OF-OUTPUT" not in collected and time.monotonic() < deadline:
+            collected += session.read(timeout=0.1)
+        assert collected.count("y") == 200
+        assert "END-OF-OUTPUT" in collected
+    finally:
+        session.close()
+
+
+def _read_until_text(session, needle, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    collected = ""
+    while needle not in collected and time.monotonic() < deadline:
+        collected += session.read(timeout=0.1)
+    return collected
+
+
+def test_fixture_shell_reports_its_terminal_size_after_a_resize():
+    session = ManagedPtySession.start("fixture-shell")
+    try:
+        session.resize(100, 30)
+        session.write("size\n")
+        assert "size:100x30" in _read_until_text(session, "size:100x30")
+    finally:
+        session.close()
+
+
+def test_fixture_shell_prints_a_detectable_permission_prompt_on_request():
+    session = ManagedPtySession.start("fixture-shell")
+    try:
+        session.write("approval\n")
+        output = _read_until_text(session, "2. No")
+        detector = ApprovalDetector()
+        prompts = detector.feed(output)
+        assert len(prompts) >= 1
+        assert prompts[-1].startswith("Do you want to proceed?")
+    finally:
+        session.close()
+
+
+def test_read_on_a_closed_session_returns_nothing_instead_of_raising():
+    session = ManagedPtySession.start("fixture-shell")
+    session.close()
+
+    assert session.read(timeout=0.05) == ""
+    assert session.closed
+
+
+def test_stream_ends_cleanly_when_its_session_is_closed_underneath_it():
+    class IdleStream(_FakeStream):
+        def recv(self, timeout):
+            raise TimeoutError
+
+    daemon = WorkerDaemon(_FakeControlClient(), "relay-1", "Personal Mac", ["fixture-shell"])
+    try:
+        daemon.start()
+        daemon.run_once()
+        daemon._sessions["session-1"].close()
+        daemon.stream_owned_session("session-1", connection_factory=lambda url, subprotocols: IdleStream([]))
     finally:
         daemon.close()
