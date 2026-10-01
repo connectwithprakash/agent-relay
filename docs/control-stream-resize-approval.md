@@ -48,3 +48,22 @@ Worker to controller. Reuses the existing kind `approval_requested`; do not add 
 1. backend-engineer lands the frames and tests, then reports the branch.
 2. worker-engineer and frontend-engineer build against this file in parallel; they can use fakes until the backend branch is merged.
 3. reviewer approves each branch before merge.
+
+## Follow-up contract: live input events and session adoption
+
+### Live `input_requested` to controllers
+
+When a controller input is stored, push the `input_requested` event to the other connected controllers of the same session, not only to the worker. This lets a second tab clear a stale approval banner. The input text stays in the event data, as it already is in replay.
+
+### Session adoption
+
+A tmux-backed session can outlive its worker process. When the worker restarts and finds the tmux session alive, it reports adoption.
+
+- Worker to server: `POST /relays/{id}/sessions/{sid}/events` with kind `session_adopted` and data `{}`. Add `session_adopted` to `EventRequest.kind`.
+- Server effect, only when the caller is the session's own worker, the worker is `online`, and the session status is `detached`: set status `ready`, increment `version`, store and broadcast the event. In any other state the event is rejected with 409 and nothing changes.
+- A session that is `failed` is never resurrected. Leases are not restored; a controller claims a new lease.
+- Worker side: after adopting a session whose backend status is `detached`, send `session_adopted` once. If the status is already `ready` or `controlled`, stay silent.
+
+### Input hardening
+
+Strings containing lone surrogates must be rejected with `invalid_input` / `invalid_output` on the input and output paths instead of ending the stream (the `len(value.encode())` calls in `control_stream.py`).
