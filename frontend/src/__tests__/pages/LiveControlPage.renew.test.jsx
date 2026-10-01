@@ -59,6 +59,9 @@ describe('LiveControlPage lease renewal', () => {
         if (outcome instanceof Error) throw outcome;
         return outcome;
       }
+      if (String(url).endsWith('/release')) {
+        return { ok: true, json: async () => held({ status: 'ready', controller_agent: null, lease_expires_at: null, version: 5 }) };
+      }
       if (String(url).endsWith('/claim')) {
         claimCalls.push(JSON.parse(options.body));
         return { ok: true, json: async () => claimResponse() };
@@ -337,5 +340,46 @@ describe('LiveControlPage lease renewal', () => {
     await advance(30_000);
 
     expect(renewCalls.map((call) => call.body.expected_version)).toEqual([3, 4]);
+  });
+
+  it('keeps the released state when a renew response arrives after the user released', async () => {
+    let resolveRenew;
+    const pending = new Promise((resolve) => { resolveRenew = resolve; });
+    renewHandler = () => pending;
+    await open();
+    await advance(31_000);
+    expect(renewCalls).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Release control' }));
+    await flush();
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+
+    await act(async () => { resolveRenew(renewedResponse(4)()); await pending; });
+    await flush();
+
+    expect(screen.getByText('session ready')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Take control' })).toBeInTheDocument();
+    expect(screen.queryByText(/^Lease /)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+    await flush();
+    expect(claimCalls[0].expected_version).toBe(5);
+  });
+
+  it('ignores a renew response older than the current session version', async () => {
+    let resolveRenew;
+    const pending = new Promise((resolve) => { resolveRenew = resolve; });
+    renewHandler = () => pending;
+    await open();
+    await advance(31_000);
+
+    listed = held({ version: 7, lease_expires_at: naiveUtc(Date.now() + 25_000) });
+    await act(async () => {
+      sockets[0].onmessage({ data: JSON.stringify({ type: 'event', event: { sequence: 9, kind: 'lease_renewed', data: { controller_agent: 'browser-controller' } } }) });
+    });
+    await flush();
+    await act(async () => { resolveRenew(renewedResponse(4)()); await pending; });
+    await flush();
+
+    expect(screen.getByText(/^Lease 0:2\d$/)).toBeInTheDocument();
   });
 });

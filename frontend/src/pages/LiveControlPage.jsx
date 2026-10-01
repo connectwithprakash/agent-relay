@@ -158,7 +158,12 @@ function LiveControlSession() {
     const attempt = async (isRetry) => {
       try {
         const renewed = await renewLease(relayId, sessionId, { expectedVersion: sessionRef.current.version, leaseSeconds: LEASE_SECONDS });
-        setSession((current) => ({ ...renewed, worker_status: current?.worker_status }));
+        // A response that outlived this effect (released, session switched) or that is older
+        // than what the page already adopted must not overwrite newer state.
+        if (cancelled) return;
+        setSession((current) => (current && renewed.version > current.version
+          ? { ...renewed, worker_status: current.worker_status }
+          : current));
       } catch (cause) {
         if (cancelled) return;
         const transient = cause.status === undefined || cause.status >= 500;
